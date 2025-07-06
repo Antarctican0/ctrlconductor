@@ -2,6 +2,22 @@
 
 A modular GUI application that maps joystick/gamepad inputs to Run8 train simulator functions via UDP communication.
 
+## 🚀 **Download Ready-to-Use Executable**
+
+**👉 For most users: Just download and run the executable - no technical setup required!**
+
+### Quick Download Links:
+- **[📥 Download Latest Release](https://github.com/your-username/ctrlconductor/releases/latest)** 
+- **[📋 Quick Start Guide](release/QUICK_START_GUIDE.md)**
+
+### What You Get:
+- ✅ **Run8ControlConductor.exe** - Single file, no installation needed
+- ✅ **Works immediately** - No Python or programming knowledge required
+- ✅ **Complete documentation** - Step-by-step instructions included
+- ✅ **Windows 10/11 compatible** - 64-bit systems
+
+---
+
 ## Features
 
 - **Multiple Input Device Support**: Works with joysticks, gamepads, and other input devices
@@ -41,6 +57,12 @@ A modular GUI application that maps joystick/gamepad inputs to Run8 train simula
 
 ## Installation
 
+### Option 1: Use Pre-built Executable (Recommended for Users)
+1. **Download**: Get `Run8ControlConductor.exe` from the [Releases](https://github.com/your-username/ctrlconductor/releases) section
+2. **Run**: Double-click the executable (no installation required)
+3. **Security Warning**: If Windows shows a security warning, click "More info" then "Run anyway"
+
+### Option 2: Run from Source (For Developers)
 1. **Clone or Download**: Get the project files
 2. **Install Dependencies**:
    ```bash
@@ -50,6 +72,11 @@ A modular GUI application that maps joystick/gamepad inputs to Run8 train simula
    ```bash
    python main.py
    ```
+
+### Option 3: Build Your Own Executable
+1. **Install PyInstaller**: `pip install pyinstaller`
+2. **Run build script**: `python build_executable.py`
+3. **Find executable**: Check the `release` folder
 
 ## Usage
 
