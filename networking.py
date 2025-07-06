@@ -63,10 +63,16 @@ class UDPClient:
     
     def send_command(self, function_id: int, value: int) -> bool:
         """
-        Send a command to Run8 simulator
+        Send a command to Run8 simulator using the official packet structure
+        
+        Packet structure (5 bytes):
+        - Header Byte: 96 (no audio) or 224 (with audio) - bit 7 is audio flag
+        - Message Type: 2-byte ushort (little-endian) 
+        - Value: 1 byte
+        - CRC: 1 byte (checksum)
         
         Args:
-            function_id: Run8 function ID
+            function_id: Run8 function ID (message type)
             value: Command value (0-255)
             
         Returns:
@@ -77,11 +83,29 @@ class UDPClient:
             return False
         
         try:
-            # Pack the data as little-endian unsigned short and unsigned char
-            data = struct.pack('<HB', function_id, value)
+            # Determine if this function should have audio
+            audio_functions = {1, 2, 8, 15}  # Alerter, Bell, Horn, Sander
+            with_audio = function_id in audio_functions
+            
+            # Header byte: 96 (0x60) for no audio, 224 (0xE0) for with audio
+            header = 224 if with_audio else 96
+            
+            # Message type as 2-byte ushort (little-endian)
+            # For function IDs < 256, first byte is 0, second byte is function_id
+            msg_type_low = function_id & 0xFF
+            msg_type_high = (function_id >> 8) & 0xFF
+            
+            # Calculate simple checksum (sum of all bytes mod 256)
+            crc = (header + msg_type_high + msg_type_low + value) & 0xFF
+            
+            # Pack the 5-byte packet
+            # Order: header, msg_type_high, msg_type_low, value, crc
+            data = struct.pack('<BBBBB', header, msg_type_high, msg_type_low, value, crc)
+            
             self.sock.sendto(data, (self.ip, self.port))
-            logger.debug(f"Sent command: function={function_id}, value={value}")
+            logger.debug(f"Sent Run8 command: function={function_id}, value={value}, audio={with_audio}, data={data.hex()}")
             return True
+            
         except Exception as e:
             logger.error(f"Failed to send UDP command: {e}")
             return False
