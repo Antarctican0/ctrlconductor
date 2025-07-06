@@ -334,14 +334,15 @@ class UIManager:
             for widget in frame.winfo_children():
                 widget.destroy()
         
-        # Create controls for each function
-        for function_name in functions:
-            category = self._get_function_category(function_name)
+        # Create controls for each function, organized by category order
+        for category, category_functions in self.function_categories.items():
             if category not in self.category_frames:
                 continue
                 
             frame = self.category_frames[category]
-            self._create_function_controls(frame, function_name)
+            for function_name in category_functions:
+                if function_name in functions:
+                    self._create_function_controls(frame, function_name)
     
     def _get_function_category(self, function_name: str) -> str:
         """Get the category for a function name"""
@@ -378,6 +379,19 @@ class UIManager:
         status_label.pack(side="left", padx=5)
         self.mapping_labels[function_name] = status_label
         
+        # Reverse axis checkbox (for lever controls) - place right after status
+        input_type = FunctionMapping.INPUT_TYPES.get(function_name, 'toggle')
+        if input_type == 'lever':
+            reverse_var = tk.BooleanVar()
+            reverse_checkbox = tk.Checkbutton(
+                func_frame,
+                text="Reverse",
+                variable=reverse_var,
+                **self._check_kwargs
+            )
+            reverse_checkbox.pack(side="left", padx=10)
+            self.reverse_axis_vars[function_name] = reverse_var
+        
         # Control buttons frame
         buttons_frame = tk.Frame(func_frame, bg=self.theme.DARK_ACCENT)
         buttons_frame.pack(side="right", padx=5)
@@ -400,19 +414,6 @@ class UIManager:
             **self._button_kwargs
         )
         clear_button.pack(side="left", padx=2)
-        
-        # Reverse axis checkbox (for lever controls)
-        input_type = FunctionMapping.INPUT_TYPES.get(function_name, 'toggle')
-        if input_type == 'lever':
-            reverse_var = tk.BooleanVar()
-            reverse_checkbox = tk.Checkbutton(
-                buttons_frame,
-                text="Reverse",
-                variable=reverse_var,
-                **self._check_kwargs
-            )
-            reverse_checkbox.pack(side="left", padx=2)
-            self.reverse_axis_vars[function_name] = reverse_var
     
     def update_mapping_display(self, function_name: str, mapping_text: str) -> None:
         """Update the display text for a function mapping"""

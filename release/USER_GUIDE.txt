@@ -1,0 +1,46 @@
+# Run8 Control Conductor - User Guide
+
+## Quick Start
+
+1. **Download and Run**:
+   - Download `Run8ControlConductor.exe`
+   - Run the executable (no installation required)
+   - Windows may show a security warning - click "More info" then "Run anyway"
+
+2. **First Time Setup**:
+   - Connect your joystick/gamepad to your computer
+   - Make sure Run8 Train Simulator is running
+   - In the application, click "Refresh Devices" to detect your controller
+   - Check the box next to your controller to enable it
+
+3. **Map Your Controls**:
+   - Navigate through the tabs (Main Controls, Lights & Wipers, etc.)
+   - Click "Map Input" next to any function you want to control
+   - Move/press the desired control on your joystick within 5 seconds
+   - Repeat for all functions you want to use
+
+4. **Start Using**:
+   - Click "Start" to begin processing inputs
+   - Your joystick inputs will now control Run8 functions
+   - Click "Stop" to pause input processing
+
+## Tips
+
+- **Save Your Mappings**: Click "Save Mappings" to save your controller setup
+- **Load Mappings**: Click "Load Mappings" to restore previously saved settings
+- **Reverse Axis**: For lever controls, check "Reverse" if the direction feels wrong
+- **Multiple Controllers**: You can enable and use multiple controllers simultaneously
+
+## Troubleshooting
+
+- **Controller not detected**: Make sure it's connected and working in Windows
+- **No response in Run8**: Check that Run8 is running and the IP/port settings are correct
+- **Wrong direction**: Use the "Reverse" checkbox for lever controls
+
+## System Requirements
+
+- Windows 10/11 (64-bit)
+- Run8 Train Simulator
+- USB joystick/gamepad
+
+For support, visit: https://github.com/your-username/ctrlconductor

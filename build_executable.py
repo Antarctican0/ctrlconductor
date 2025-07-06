@@ -58,23 +58,47 @@ def main():
         "--windowed",  # Hide console window (GUI app)
         "--name=Run8ControlConductor",
         "--icon=icon.ico" if os.path.exists("icon.ico") else "",
-        "--add-data=input_mappings.csv;.",  # Include CSV file if it exists
+        "--add-data=input_mappings.csv;." if os.path.exists("input_mappings.csv") else "",
         "--hidden-import=pygame",
         "--hidden-import=tkinter",
         "--hidden-import=tkinter.ttk",
         "--hidden-import=tkinter.messagebox",
         "--hidden-import=tkinter.filedialog",
+        "--hidden-import=config",
+        "--hidden-import=networking",
+        "--hidden-import=input_handler",
+        "--hidden-import=mapping_logic",
+        "--hidden-import=ui_components",
+        "--hidden-import=utils",
         "--collect-all=pygame",
         "main.py"
     ]
     
-    # Remove empty icon parameter if no icon file exists
+    # Remove empty parameters
     pyinstaller_cmd = [arg for arg in pyinstaller_cmd if arg]
     
-    # Run PyInstaller
-    cmd_str = " ".join(pyinstaller_cmd)
-    if not run_command(cmd_str, "Building executable with PyInstaller"):
-        return False
+    # Get the virtual environment path
+    venv_path = os.path.join(os.getcwd(), '.venv', 'Scripts', 'pyinstaller.exe')
+    
+    # Run PyInstaller using the spec file for better reliability
+    spec_file = "Run8ControlConductor.spec"
+    if os.path.exists(spec_file):
+        if os.path.exists(venv_path):
+            cmd_str = f'"{venv_path}" {spec_file}'
+        else:
+            cmd_str = f"pyinstaller {spec_file}"
+        
+        if not run_command(cmd_str, "Building executable with PyInstaller (using spec file)"):
+            return False
+    else:
+        # Fallback to command line approach
+        if os.path.exists(venv_path):
+            cmd_str = f'"{venv_path}" ' + " ".join(pyinstaller_cmd[1:])  # Skip 'pyinstaller' itself
+        else:
+            cmd_str = " ".join(pyinstaller_cmd)
+        
+        if not run_command(cmd_str, "Building executable with PyInstaller"):
+            return False
     
     # Check if executable was created
     exe_path = dist_dir / "Run8ControlConductor.exe"

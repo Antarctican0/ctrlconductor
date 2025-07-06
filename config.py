@@ -99,18 +99,24 @@ class FunctionMapping:
     
     CATEGORIES = {
         "Main Controls": [
+            # Lever controls with reverse options first
             "Throttle Lever", "Train Brake Lever", "Independent Brake Lever", 
-            "Dyn Brake Lever", "Reverser Lever", "Sander", "Horn", "Bell", "Alerter"
+            "Dyn Brake Lever", "Reverser Lever",
+            # Other controls
+            "Sander", "Horn", "Bell", "Alerter"
         ],
         "Lights and Wipers": [
+            # No lever controls in this category, but keeping logical order
             "Headlight_Front", "Headlight_Rear", "Wiper Switch", 
             "Cab Light Switch", "Step Light Switch", "Gauge Light Switch"
         ],
         "DPU": [
+            # No lever controls in this category
             "DPU Throttle Increase", "DPU Throttle Decrease", "DPU Dyn-Brake Setup", 
             "DPU Fence Increase", "DPU Fence Decrease"
         ],
         "Misc": [
+            # No lever controls in this category  
             "EOT Emg Stop", "HEP Switch", "SlowSpeedOnOff", "Slow Speed Increment", 
             "Slow Speed Decrement", "Independent Bailoff", "Distance Counter", 
             "Park-Brake Set", "Park-Brake Release"
