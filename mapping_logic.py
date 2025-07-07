@@ -69,6 +69,7 @@ class InputMapper:
             return changed
         # If no button/hat is pressed, do not change the state (latch last position)
         return False
+
     def find_existing_mapping(self, device_id: int, input_type: str, input_index: int) -> Optional[str]:
         """
         Find if an input is already mapped to a function.
@@ -78,8 +79,7 @@ class InputMapper:
             if mapping == (device_id, input_type, input_index):
                 return func
         return None
-    """Handles input mapping and processing logic"""
-    
+
     def __init__(self, mapping_file: Optional[str] = None):
         """
         Initialize the input mapper
@@ -331,11 +331,11 @@ class InputMapper:
         
         if input_behavior == 'lever':
             return self._process_lever_input(function_name, input_type, raw_value, mapping_key, prev_states)
-        elif input_type == 'Button':
+        elif input_type == "Button":
             return self._process_button_input(function_name, raw_value, mapping_key, prev_states, input_behavior)
-        elif input_type == 'Axis' and input_behavior not in ('lever',):
+        elif input_type == "Axis" and input_behavior not in ('lever',):
             return self._process_axis_input(function_name, raw_value, mapping_key, prev_states, input_behavior)
-        elif input_type == 'Hat':
+        elif input_type == "Hat":
             return self._process_hat_input(function_name, raw_value, mapping_key, prev_states, input_behavior)
         
         return False, 0
@@ -361,48 +361,38 @@ class InputMapper:
                 return True, notch
                 
         elif function_name == 'Reverser Lever':
-            # Reverser axis: -0.33 to +0.33 is neutral, outside is reverse/forward
-            if axis_val <= -0.33:
-                reverser_val = 0  # Reverse
-            elif axis_val >= 0.33:
-                reverser_val = 255  # Forward
-            else:
-                reverser_val = 127  # Neutral
-            prev_reverser = prev_states.get(mapping_key, -1)
+            # Get axis value (handle reverse setting)
+            axis_val = -raw_value if self.reverse_axis_settings.get(function_name, False) else raw_value
+            
+            # Precise reverser control with clear regions for reverse/neutral/forward
+            if axis_val < -0.8:  # Reverse position - more definitive threshold
+                reverser_val = 0
+                position = "reverse"
+            elif axis_val > 0.8:  # Forward position - more definitive threshold
+                reverser_val = 255
+                position = "forward"
+            else:  # Neutral position - wider center region for stability
+                reverser_val = 127
+                position = "neutral"
+            
+            # Check if value changed since last update
+            prev_reverser = prev_states.get(mapping_key, None)
             if reverser_val != prev_reverser:
                 prev_states[mapping_key] = reverser_val
-                position_name = "reverse" if reverser_val == 0 else ("forward" if reverser_val == 255 else "neutral")
-                logger.info(f"Lever reverser changed to: {position_name} (value: {reverser_val}, axis: {axis_val:.3f})")
+                logger.info(f"Lever reverser: position={position}, value={reverser_val}, axis={axis_val:.2f}")
                 return True, reverser_val
                 
-        elif function_name == 'Dyn Brake Lever':
-            # Dynamic brake: released at -0.95, full application at +1.0
-            if axis_val <= -0.90:  # Slightly less strict than -0.95 for better detection
-                dyn_val = 0  # Released
-            else:
-                # Map from -0.90 to +1.0 to range 1-255
-                norm = (axis_val - (-0.90)) / (1.0 - (-0.90))
-                norm = max(0.0, min(1.0, norm))
-                dyn_val = int(round(norm * 254)) + 1  # Range 1-255
-            prev_dyn = prev_states.get(mapping_key, -1)
-            if dyn_val != prev_dyn:
-                prev_states[mapping_key] = dyn_val
-                return True, dyn_val
-                
-        elif function_name in ('Independent Brake Lever', 'Train Brake Lever'):
-            # Brake levers: Use full range with deadzone at extremes
-            if axis_val <= -0.98:
-                brake_val = 0  # Fully released
-            elif axis_val >= 0.98:
-                brake_val = 255  # Fully applied
-            else:
-                # Map -0.98 to +0.98 to 0-255 with smooth scaling
-                normalized = (axis_val + 0.98) / (0.98 * 2)
-                brake_val = int(round(normalized * 255))
+        elif function_name in ('Independent Brake Lever', 'Train Brake Lever', 'Dyn Brake Lever'):
+            # Brake levers: Use full range from -1 to 1, mapping to 0-255.
+            # Reverse axis setting is handled before this.
+            # Map -1.0 to 1.0 -> 0 to 255
+            brake_val = int(((axis_val + 1.0) / 2.0) * 255)
             brake_val = max(0, min(255, brake_val))
+
             prev_brake = prev_states.get(mapping_key, -1)
             if brake_val != prev_brake:
                 prev_states[mapping_key] = brake_val
+                logger.info(f"Brake {function_name} changed to: {brake_val} (axis: {axis_val:.3f})")
                 return True, brake_val
         
         return False, 0
@@ -654,51 +644,31 @@ class InputMapper:
     
     def process_brake_input(self, function_name: str, value: float) -> int:
         """
-        Process brake input for better control
-        Args:
-            function_name: Name of brake function
-            value: Axis value from -1.0 to 1.0
-        Returns:
-            Processed value for simulator
+        Process brake input with direct mapping for better responsiveness
         """
-        # Identify which brake control this is
-        if function_name == "Train_Brake":
-            # Train brake is typically 0 (release) to 255 (emergency)
-            # Add deadzone at the release end
-            if value < -0.95:
-                brake_val = 0  # Full release
+        # Direct mapping from -1.0 to 1.0 to 0-255 range with minimal processing
+        # This provides immediate response to control movements
+        if function_name == "Train Brake Lever":
+            # Slight bias toward release position for train brakes
+            brake_val = int(((value + 1.05) / 2.1) * 255)
+        elif function_name == "Independent Brake Lever":
+            # Standard mapping for independent brake
+            brake_val = int(((value + 1.0) / 2.0) * 255)
+        elif function_name == "Dyn Brake Lever":
+            # Dynamic brake is typically only active in positive range
+            if value < -0.5:
+                brake_val = 0  # Off position
             else:
-                # Scale from -0.95 to 1.0 range to 0-255
-                normalized = (value + 0.95) / 1.95
-                brake_val = int(normalized * 255)
-                brake_val = max(0, min(255, brake_val))
-                
-        elif function_name == "Independent_Brake":
-            # Independent brake is typically 0 (release) to 255 (full)
-            # Add deadzone at both ends for better control
-            if value < -0.95:
-                brake_val = 0  # Full release
-            elif value > 0.95:
-                brake_val = 255  # Full application
-            else:
-                # Scale from -0.95 to 0.95 range to 0-255
-                normalized = (value + 0.95) / 1.9
-                brake_val = int(normalized * 255)
-                brake_val = max(0, min(255, brake_val))
-                
-        elif function_name == "Dynamic_Brake":
-            # Dynamic brake is typically 0 (off) to 255 (full)
-            # Only active in positive range, with deadzone at start
-            if value < -0.2:
-                brake_val = 0  # Off
-            else:
-                # Scale from -0.2 to 1.0 range to 0-255
-                normalized = (value + 0.2) / 1.2
-                brake_val = int(normalized * 255)
-                brake_val = max(0, min(255, brake_val))
+                # Map from -0.5 to 1.0 to 0-255 for more control
+                brake_val = int(((value + 0.5) / 1.5) * 255)
         else:
-            # Default handling
-            brake_val = int((value + 1.0) * 127.5)
-            
-        logger.info(f"Brake control: {function_name}, input={value:.2f}, value={brake_val}")
+            # Default mapping for any other levers
+            brake_val = int(((value + 1.0) / 2.0) * 255)
+        
+        # Ensure value stays in valid range
+        brake_val = max(0, min(255, brake_val))
+        
+        # Log at INFO level for debugging
+        logger.info(f"Brake {function_name}: axis={value:.2f}, value={brake_val}")
+        
         return brake_val

@@ -243,7 +243,7 @@ class Run8ControlConductor:
                         })
                         value = reverser_positions.get(state, 127)
                         self.pending_commands[function_id] = value
-                        self.state_tracker.set_state('last_reverser_send_time', time.time())
+                        self.state_tracker.states['last_reverser_send_time'] = time.time()
                         logger.info(f"Queued 3-way reverser command: state={state}, value={value}")
 
             # --- Normal input processing ---
@@ -259,7 +259,7 @@ class Run8ControlConductor:
                             continue
 
                         # Special handling for brake controls
-                        if function_name in ["Train_Brake", "Independent_Brake", "Dynamic_Brake"] and input_type == "Axis":
+                        if function_name in ["Train Brake Lever", "Independent Brake Lever", "Dyn Brake Lever"] and input_type == "Axis":
                             function_id = self.input_mapper.function_dict.get(function_name)
                             if function_id:
                                 processed_value = self.input_mapper.process_brake_input(function_name, value)
@@ -294,7 +294,11 @@ class Run8ControlConductor:
         try:
             # Send all pending commands
             for function_id, value in self.pending_commands.items():
-                if self.udp_client.send_command(function_id, value):
+                # Determine if audio flag should be used (default to True)
+                # This could be customized based on function_id if needed
+                use_audio = True
+
+                if self.udp_client.send_command(function_id, value, audio=use_audio):
                     # Log reverser commands at info level for debugging
                     if function_id == self.input_mapper.function_dict.get("Reverser Lever"):
                         logger.info(f"Sent UDP reverser command: function={function_id}, value={value}")

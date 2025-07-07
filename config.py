@@ -12,8 +12,8 @@ DEFAULT_PORT = 18888
 # Input detection constants
 DEADZONE = 0.7
 RELEASE_TIMEOUT = 0.15
-POLLING_INTERVAL = 20
-UDP_SEND_INTERVAL = 50
+POLLING_INTERVAL = 20  # ms (was likely 50 or higher)
+UDP_SEND_INTERVAL = 20  # ms (was likely 50 or higher)
 
 # UI Theme Configuration
 class ThemeConfig:
