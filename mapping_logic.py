@@ -22,7 +22,7 @@ DEADZONE = 0.7
 class InputMapper:
     """Handles input mapping and processing logic"""
     
-    def __init__(self, mapping_file: str = None):
+    def __init__(self, mapping_file: Optional[str] = None):
         """
         Initialize the input mapper
         
@@ -40,7 +40,18 @@ class InputMapper:
         }
         self.function_dict = {name: value for name, value in FunctionMapping.FUNCTIONS}
         
-    def load_mappings(self) -> bool:
+        # Reverser switch mode settings
+        self.reverser_switch_mode = False
+        self.reverser_positions = {
+            "forward": 65535,   # Full forward
+            "neutral": 32767,   # Center position
+            "reverse": 0        # Full reverse
+        }
+        
+        # State tracking for reverser switch
+        self.reverser_state = "neutral"  # Current state: forward, neutral, reverse
+    
+    def load_mappings_from_csv(self) -> bool:
         """
         Load input mappings from CSV file
         
@@ -61,16 +72,22 @@ class InputMapper:
                     input_index = row.get('Index')
                     reverse_axis = row.get('Reverse', 'False')
                     
-                    if all([function_name, device_id, input_type, input_index]):
+                    if all([function_name is not None, device_id is not None, input_type is not None, input_index is not None]):
                         try:
-                            self.function_input_map[function_name] = (
-                                int(device_id), 
-                                input_type, 
-                                int(input_index)
+                            function_name_str = str(function_name)
+                            input_type_str = str(input_type)
+                            if input_index is None or device_id is None:
+                                raise ValueError("Input index or device id is None")
+                            input_index_int = int(input_index)
+                            device_id_int = int(device_id)
+                            self.function_input_map[function_name_str] = (
+                                device_id_int, 
+                                input_type_str, 
+                                input_index_int
                             )
-                            self.reverse_axis_settings[function_name] = reverse_axis.lower() == 'true'
-                            logger.debug(f"Loaded mapping: {function_name} -> {device_id}:{input_type}:{input_index}")
-                        except ValueError as e:
+                            self.reverse_axis_settings[function_name_str] = str(reverse_axis).lower() == 'true'
+                            logger.debug(f"Loaded mapping: {function_name_str} -> {device_id_int}:{input_type_str}:{input_index_int}")
+                        except (ValueError, TypeError) as e:
                             logger.error(f"Invalid mapping data for {function_name}: {e}")
                             
             logger.info(f"Loaded {len(self.function_input_map)} mappings from {self.mapping_file}")
@@ -337,6 +354,95 @@ class InputMapper:
         
         prev_states[mapping_key] = raw_value
         return False, 0
+    
+    def process_reverser_switch_input(self, device_id, input_type, input_index, value, states):
+        """
+        Process reverser input in 3-position switch mode.
+        
+        Args:
+            device_id: Input device ID
+            input_type: Type of input (Button, Axis, Hat)
+            input_index: Index of the input
+            value: Current input value
+            states: Dictionary of current states
+            
+        Returns:
+            tuple: (changed, value) - Whether the state changed and the new value
+        """
+        changed = False
+        
+        if input_type == "Button":
+            # Button pressed = 1, released = 0
+            if value == 0:
+                # Button released, ignore
+                return False, self.reverser_positions[self.reverser_state]
+            
+            # Check if this button is mapped to a specific position
+            forward_key = f"reverser_switch_forward_{device_id}_{input_index}"
+            neutral_key = f"reverser_switch_neutral_{device_id}_{input_index}"
+            reverse_key = f"reverser_switch_reverse_{device_id}_{input_index}"
+            
+            # First time setup for buttons if they don't exist in states
+            if not any(k.startswith(f"reverser_switch_") for k in states):
+                # This is the first button, map it to forward
+                states[forward_key] = True
+                self.reverser_state = "forward"
+                return True, self.reverser_positions["forward"]
+            elif forward_key not in states and neutral_key not in states and reverse_key not in states:
+                # This is a new button, find a position that's not mapped yet
+                if not any(k.startswith("reverser_switch_forward") for k in states):
+                    states[forward_key] = True
+                    self.reverser_state = "forward"
+                    return True, self.reverser_positions["forward"]
+                elif not any(k.startswith("reverser_switch_neutral") for k in states):
+                    states[neutral_key] = True
+                    self.reverser_state = "neutral"
+                    return True, self.reverser_positions["neutral"]
+                elif not any(k.startswith("reverser_switch_reverse") for k in states):
+                    states[reverse_key] = True
+                    self.reverser_state = "reverse"
+                    return True, self.reverser_positions["reverse"]
+            
+            # Handle already mapped buttons
+            if forward_key in states:
+                if self.reverser_state != "forward":
+                    self.reverser_state = "forward"
+                    changed = True
+            elif neutral_key in states:
+                if self.reverser_state != "neutral":
+                    self.reverser_state = "neutral"
+                    changed = True
+            elif reverse_key in states:
+                if self.reverser_state != "reverse":
+                    self.reverser_state = "reverse"
+                    changed = True
+                    
+        elif input_type == "Hat":
+            # For hat switches: up for forward, center for neutral, down for reverse
+            if value[1] == 1:  # Up
+                if self.reverser_state != "forward":
+                    self.reverser_state = "forward"
+                    changed = True
+            elif value[1] == -1:  # Down
+                if self.reverser_state != "reverse":
+                    self.reverser_state = "reverse"
+                    changed = True
+            elif value == (0, 0):  # Center
+                if self.reverser_state != "neutral":
+                    self.reverser_state = "neutral"
+                    changed = True
+        
+        return changed, self.reverser_positions[self.reverser_state]
+    
+    def set_reverser_switch_mode(self, switch_mode: bool):
+        """Set the reverser switch mode"""
+        self.reverser_switch_mode = switch_mode
+    
+    def get_reverser_switch_mode(self):
+        """Get the current reverser switch mode"""
+        return self.reverser_switch_mode
+    
+    # (Duplicate methods removed. The original implementations above are retained.)
     
     def get_all_mappings(self) -> Dict[str, Tuple[int, str, int]]:
         """Get all current mappings"""

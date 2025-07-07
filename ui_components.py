@@ -43,6 +43,7 @@ class UIManager:
         self.prompt_label: Optional[tk.Label] = None
         self.tabs: Optional[ttk.Notebook] = None
         self.category_frames: Dict[str, tk.Frame] = {}
+        self.function_frames: List[tk.Frame] = []  # Add missing attribute
         
         # Button references
         self.start_button: Optional[tk.Button] = None
@@ -62,6 +63,7 @@ class UIManager:
         self.on_device_toggle_callback: Optional[Callable] = None
         self.on_map_input_callback: Optional[Callable] = None
         self.on_clear_mapping_callback: Optional[Callable] = None
+        self.reverser_mode_callback = None
         
         # Setup UI
         self._setup_ui_theme()
@@ -70,33 +72,6 @@ class UIManager:
     def _setup_ui_theme(self) -> None:
         """Setup UI theme colors and styles"""
         self.master.configure(bg=self.theme.DARK_BG)
-        
-        # Define common widget styles
-        self._label_kwargs = {
-            'bg': self.theme.LIGHT_BG,
-            'fg': self.theme.DARK_FG
-        }
-        self._entry_kwargs = {
-            'bg': self.theme.DARK_ENTRY_BG,
-            'fg': self.theme.DARK_ENTRY_FG,
-            'insertbackground': self.theme.DARK_ENTRY_FG,
-            'highlightbackground': self.theme.DARK_HIGHLIGHT,
-            'highlightcolor': self.theme.DARK_HIGHLIGHT
-        }
-        self._button_kwargs = {
-            'bg': self.theme.DARK_BUTTON_BG,
-            'fg': self.theme.DARK_BUTTON_FG,
-            'activebackground': self.theme.DARK_HIGHLIGHT,
-            'activeforeground': self.theme.DARK_FG,
-            'relief': 'flat'
-        }
-        self._check_kwargs = {
-            'bg': self.theme.DARK_BG,
-            'fg': self.theme.DARK_FG,
-            'activebackground': self.theme.DARK_BG,
-            'activeforeground': self.theme.DARK_FG,
-            'selectcolor': self.theme.DARK_ACCENT
-        }
         
         # Setup TTK styles
         self._setup_ttk_style()
@@ -133,16 +108,17 @@ class UIManager:
         ip_frame = tk.Frame(connection_frame, bg=self.theme.DARK_BG)
         ip_frame.pack(side="left", padx=5)
         
-        tk.Label(ip_frame, text="Simulator IP:", **self._label_kwargs).pack()
-        self.ip_entry = tk.Entry(ip_frame, width=15, **self._entry_kwargs)
+        label = tk.Label(ip_frame, text="Simulator IP:", bg=self.theme.LIGHT_BG, fg=self.theme.DARK_FG)
+        label.pack()
+        self.ip_entry = tk.Entry(ip_frame, width=15, bg=self.theme.DARK_ENTRY_BG, fg=self.theme.DARK_ENTRY_FG, insertbackground=self.theme.DARK_ENTRY_FG)
         self.ip_entry.pack()
         
         # Port configuration
         port_frame = tk.Frame(connection_frame, bg=self.theme.DARK_BG)
         port_frame.pack(side="left", padx=5)
         
-        tk.Label(port_frame, text="Simulator Port:", **self._label_kwargs).pack()
-        self.port_entry = tk.Entry(port_frame, width=10, **self._entry_kwargs)
+        tk.Label(port_frame, text="Simulator Port:", bg=self.theme.LIGHT_BG, fg=self.theme.DARK_FG).pack()
+        self.port_entry = tk.Entry(port_frame, width=10, bg=self.theme.DARK_ENTRY_BG, fg=self.theme.DARK_ENTRY_FG, insertbackground=self.theme.DARK_ENTRY_FG)
         self.port_entry.pack()
     
     def _create_device_section(self) -> None:
@@ -153,8 +129,8 @@ class UIManager:
             bg=self.theme.LIGHT_BG,
             fg=self.theme.DARK_FG,
             bd=2,
-            relief='groove',
-            labelanchor='nw'
+            relief=tk.GROOVE,  # Use tk.GROOVE constant, not string
+            labelanchor="nw"   # Use keyword argument
         )
         self.device_frame.pack(pady=10, fill="x")
         
@@ -163,7 +139,12 @@ class UIManager:
             self.device_frame,
             text="Refresh Devices",
             command=self._on_refresh_devices,
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.refresh_devices_button.pack(anchor="w", pady=2)
         
@@ -179,8 +160,8 @@ class UIManager:
             bg=self.theme.DARK_ACCENT,
             fg=self.theme.DARK_FG,
             bd=2,
-            relief='groove',
-            labelanchor='nw'
+            relief=tk.GROOVE,  # Use tk.GROOVE constant
+            labelanchor="nw"
         )
         self.mapping_frame.pack(pady=10, fill="both", expand=True)
         
@@ -192,7 +173,7 @@ class UIManager:
             fg="#7ecfff",
             bg=self.theme.DARK_ACCENT
         )
-        self.prompt_label.pack(anchor="w", pady=(0, 5))
+        self.prompt_label.pack(anchor=tk.W, pady=(0, 5))  # Use tk.W constant
         
         # Create tabbed interface
         self.tabs = ttk.Notebook(self.mapping_frame)
@@ -206,6 +187,15 @@ class UIManager:
             
             # Create scrollable frame for this category
             self._create_scrollable_category_frame(category, frame)
+        
+        # Create reverser mode toggle
+        self.reverser_mode_var = tk.BooleanVar(value=False)
+        self.reverser_mode_callback = None
+        self.reverser_mode_frame = None
+        self.reverser_mode_checkbox = None
+        
+        # Create the reverser mode selection in the mapping section
+        self._create_reverser_mode_selector()
     
     def _create_scrollable_category_frame(self, category: str, parent_frame: tk.Frame) -> None:
         """Create a scrollable frame for a function category"""
@@ -248,7 +238,12 @@ class UIManager:
             button_frame,
             text="Start",
             command=self._on_start,
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.start_button.pack(side="left", padx=5)
         
@@ -256,8 +251,13 @@ class UIManager:
             button_frame,
             text="Stop",
             command=self._on_stop,
-            state="disabled",
-            **self._button_kwargs
+            state=tk.DISABLED,
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.stop_button.pack(side="left", padx=5)
         
@@ -269,7 +269,12 @@ class UIManager:
             mapping_control_frame,
             text="Load Mappings",
             command=self._on_load_mappings,
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.load_mappings_button.pack(side="left", padx=2)
         
@@ -277,7 +282,12 @@ class UIManager:
             mapping_control_frame,
             text="Save Mappings",
             command=self._on_save_mappings,
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.save_mappings_button.pack(side="left", padx=2)
         
@@ -285,9 +295,36 @@ class UIManager:
             mapping_control_frame,
             text="Clear All",
             command=self._on_clear_mappings,
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         self.clear_mappings_button.pack(side="left", padx=2)
+    
+    def _create_reverser_mode_selector(self):
+        """Create the reverser mode selection UI elements"""
+        self.reverser_mode_frame = ttk.Frame(self.mapping_frame)
+        self.reverser_mode_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(self.reverser_mode_frame, text="Reverser Mode:").pack(side=tk.LEFT)
+        
+        self.reverser_mode_checkbox = ttk.Checkbutton(
+            self.reverser_mode_frame,
+            text="Use 3-position switch mode",
+            variable=self.reverser_mode_var,
+            command=self._on_reverser_mode_change
+        )
+        self.reverser_mode_checkbox.pack(side=tk.LEFT, padx=10)
+        
+        ttk.Separator(self.mapping_frame).pack(fill=tk.X, padx=5, pady=5)
+    
+    def _on_reverser_mode_change(self):
+        """Handle reverser mode toggle change"""
+        if self.reverser_mode_callback:
+            self.reverser_mode_callback(self.reverser_mode_var.get())
     
     def populate_device_list(self, devices: List[Any]) -> None:
         """
@@ -310,9 +347,13 @@ class UIManager:
                 text=f"{i}: {device.name}",
                 variable=var,
                 command=lambda idx=i: self._on_device_toggle(idx),
-                **self._check_kwargs
+                bg=self.theme.DARK_BG,
+                fg=self.theme.DARK_FG,
+                activebackground=self.theme.DARK_BG,
+                activeforeground=self.theme.DARK_FG,
+                selectcolor=self.theme.DARK_ACCENT
             )
-            checkbox.pack(anchor="w")
+            checkbox.pack(anchor=tk.W)  # Use tk.W constant
             
             self.device_vars.append(var)
             self.device_checkboxes.append(checkbox)
@@ -353,33 +394,30 @@ class UIManager:
     
     def _create_function_controls(self, parent_frame: tk.Frame, function_name: str) -> None:
         """Create controls for a single function"""
-        # Main function frame
         func_frame = tk.Frame(parent_frame, bg=self.theme.DARK_ACCENT)
         func_frame.pack(fill="x", pady=2)
-        
-        # Function name label
+
         name_label = tk.Label(
             func_frame,
             text=function_name,
             width=25,
-            anchor="w",
-            **self._label_kwargs
+            anchor=tk.W,
+            bg=self.theme.LIGHT_BG,
+            fg=self.theme.DARK_FG
         )
         name_label.pack(side="left", padx=5)
-        
-        # Mapping status label
+
         status_label = tk.Label(
             func_frame,
             text="Not mapped",
             width=20,
-            anchor="w",
+            anchor=tk.W,  # Use tk.W constant
             bg=self.theme.DARK_ENTRY_BG,
             fg=self.theme.DARK_ENTRY_FG
         )
         status_label.pack(side="left", padx=5)
         self.mapping_labels[function_name] = status_label
-        
-        # Reverse axis checkbox (for lever controls) - place right after status
+
         input_type = FunctionMapping.INPUT_TYPES.get(function_name, 'toggle')
         if input_type == 'lever':
             reverse_var = tk.BooleanVar()
@@ -387,34 +425,45 @@ class UIManager:
                 func_frame,
                 text="Reverse",
                 variable=reverse_var,
-                **self._check_kwargs
+                bg=self.theme.DARK_BG,
+                fg=self.theme.DARK_FG,
+                activebackground=self.theme.DARK_BG,
+                activeforeground=self.theme.DARK_FG,
+                selectcolor=self.theme.DARK_ACCENT
             )
             reverse_checkbox.pack(side="left", padx=10)
             self.reverse_axis_vars[function_name] = reverse_var
-        
-        # Control buttons frame
+
         buttons_frame = tk.Frame(func_frame, bg=self.theme.DARK_ACCENT)
         buttons_frame.pack(side="right", padx=5)
-        
-        # Map input button
+
         map_button = tk.Button(
             buttons_frame,
             text="Map Input",
             command=lambda fn=function_name: self._on_map_input(fn),
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         map_button.pack(side="left", padx=2)
         self.mapping_buttons[function_name] = map_button
-        
-        # Clear mapping button
+
         clear_button = tk.Button(
             buttons_frame,
             text="Clear",
             command=lambda fn=function_name: self._on_clear_mapping(fn),
-            **self._button_kwargs
+            bg=self.theme.DARK_BUTTON_BG,
+            fg=self.theme.DARK_BUTTON_FG,
+            activebackground=self.theme.DARK_HIGHLIGHT,
+            activeforeground=self.theme.DARK_FG,
+            relief=tk.FLAT,
+            bd=1
         )
         clear_button.pack(side="left", padx=2)
-    
+
     def update_mapping_display(self, function_name: str, mapping_text: str) -> None:
         """Update the display text for a function mapping"""
         if function_name in self.mapping_labels:
@@ -471,22 +520,22 @@ class UIManager:
     def enable_start_button(self) -> None:
         """Enable the start button"""
         if self.start_button:
-            self.start_button.config(state="normal")
+            self.start_button.config(state=tk.NORMAL)  # Use tk.NORMAL constant
     
     def disable_start_button(self) -> None:
         """Disable the start button"""
         if self.start_button:
-            self.start_button.config(state="disabled")
+            self.start_button.config(state=tk.DISABLED)  # Use tk.DISABLED constant
     
     def enable_stop_button(self) -> None:
         """Enable the stop button"""
         if self.stop_button:
-            self.stop_button.config(state="normal")
+            self.stop_button.config(state=tk.NORMAL)  # Use tk.NORMAL constant
     
     def disable_stop_button(self) -> None:
         """Disable the stop button"""
         if self.stop_button:
-            self.stop_button.config(state="disabled")
+            self.stop_button.config(state=tk.DISABLED)  # Use tk.DISABLED constant
     
     def show_message(self, title: str, message: str, msg_type: str = "info") -> None:
         """Show a message dialog"""
@@ -537,6 +586,14 @@ class UIManager:
     def set_clear_mapping_callback(self, callback: Callable) -> None:
         """Set the clear mapping callback"""
         self.on_clear_mapping_callback = callback
+    
+    def set_reverser_mode_callback(self, callback: Callable) -> None:
+        """Set the callback function for reverser mode changes"""
+        self.reverser_mode_callback = callback
+    
+    def set_reverser_mode(self, switch_mode: bool):
+        """Update the UI to reflect the current reverser mode"""
+        self.reverser_mode_var.set(switch_mode)
     
     # Internal callback methods
     def _on_start(self) -> None:

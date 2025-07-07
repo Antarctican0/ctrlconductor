@@ -2,9 +2,48 @@
 
 A modular GUI application that maps joystick/gamepad inputs to Run8 train simulator functions via UDP communication.
 
-### Quick Download Links:
-- **[📥 Download Latest Release](https://github.com/Antarctican0/ctrlconductor/releases/latest)** 
-- **[📋 Quick Start Guide](release/QUICK_START_GUIDE.md)**
+## Features
+
+- **Multi-device Support**: Connect and use multiple controllers simultaneously
+- **Flexible Input Mapping**: Map buttons, axes, and hat switches to Run8 functions
+- **Real-time Processing**: Low-latency input processing for responsive control
+- **Modular Architecture**: Clean, maintainable code structure
+- **User-friendly Interface**: Intuitive GUI with tabbed organization
+- **Persistent Settings**: Save and load your controller configurations
+- **Comprehensive Logging**: Built-in debugging and error reporting
+
+## Quick Start
+
+### Option 1: Download Pre-built Release
+1. **[📥 Download Latest Release](https://github.com/Antarctican0/ctrlconductor/releases/latest)**
+2. Extract the zip file
+3. Run `Run8ControlConductor.exe`
+4. See `USER_GUIDE.txt` for setup instructions
+
+### Option 2: Run from Source
+1. Clone this repository
+2. Install Python 3.8+ and pip
+3. Install dependencies: `pip install -r requirements.txt`
+4. Run the application: `python main.py`
+
+## Project Structure
+
+See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed information about the codebase architecture.
+
+## Building from Source
+
+To create your own executable:
+
+```bash
+# Install build dependencies
+pip install -r requirements.txt
+pip install pyinstaller
+
+# Build the executable
+python build_executable.py
+```
+
+The executable will be created in the `release/` directory.
 
 ## Troubleshooting
 
@@ -24,7 +63,7 @@ A modular GUI application that maps joystick/gamepad inputs to Run8 train simula
    - Check firewall settings
    - Ensure IP address and port are correct
 
-### Debug Mode
+### Debug Information
 
 The application includes comprehensive logging. Check the console output for detailed information about:
 - Device detection and initialization

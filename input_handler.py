@@ -6,7 +6,7 @@ Handles joystick/gamepad device detection, management, and input processing.
 
 import pygame
 import time
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 import logging
 
 # Configure logging
@@ -21,7 +21,7 @@ RELEASE_TIMEOUT = 0.15
 class InputDevice:
     """Represents a connected input device"""
     
-    def __init__(self, device_id: int, name: str, joystick: pygame.joystick.Joystick):
+    def __init__(self, device_id: int, name: str, joystick: pygame.joystick.JoystickType):
         """
         Initialize input device
         
@@ -77,7 +77,7 @@ class InputManager:
         """Initialize the input manager"""
         self.devices: Dict[int, InputDevice] = {}
         self.enabled_devices: List[int] = []
-        self.input_states: Dict[Tuple, any] = {}
+        self.input_states: Dict[Tuple, Any] = {}
         self.last_input_time = 0
         self.waiting_for_input = False
         self.input_detected_callback = None
@@ -218,7 +218,7 @@ class InputManager:
         
         return None
     
-    def process_inputs(self) -> List[Tuple[int, str, int, any]]:
+    def process_inputs(self) -> List[Tuple[int, str, int, Any]]:
         """
         Process all inputs from enabled devices
         

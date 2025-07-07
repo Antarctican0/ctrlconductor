@@ -63,6 +63,9 @@ class Run8ControlConductor:
         self.input_target_function: Optional[str] = None
         self.pending_commands: Dict[int, int] = {}  # function_id -> value
         
+        # Reverser mode (default to axis)
+        self.reverser_switch_mode = False
+        
         # Setup UI callbacks
         self._setup_ui_callbacks()
         
@@ -87,6 +90,22 @@ class Run8ControlConductor:
         self.ui_manager.set_device_toggle_callback(self.on_device_toggle)
         self.ui_manager.set_map_input_callback(self.map_input)
         self.ui_manager.set_clear_mapping_callback(self.clear_mapping)
+        self.ui_manager.set_reverser_mode_callback(self.toggle_reverser_mode)
+    
+    def toggle_reverser_mode(self, switch_mode: bool) -> None:
+        """Toggle between axis and 3-position switch mode for the reverser
+        
+        Args:
+            switch_mode: True for 3-position switch mode, False for axis mode
+        """
+        self.reverser_switch_mode = switch_mode
+        logger.info(f"Reverser mode set to: {'3-position switch' if switch_mode else 'axis'}")
+        
+        # Update the input mapper with the new mode
+        self.input_mapper.set_reverser_switch_mode(switch_mode)
+        
+        # Update the UI to reflect the current mode
+        self.ui_manager.set_reverser_mode(switch_mode)
     
     def start_application(self) -> None:
         """Start the input processing and UDP communication"""
@@ -210,11 +229,21 @@ class Run8ControlConductor:
                         input_type == mapped_type and 
                         input_index == mapped_index):
                         
-                        # Process the input value
-                        changed, processed_value = self.input_mapper.process_input_value(
-                            function_name, device_id, input_type, input_index, value, 
-                            self.state_tracker.states
-                        )
+                        # Special handling for reverser in switch mode
+                        if function_name == "Reverser" and self.reverser_switch_mode and input_type == "Button":
+                            # Handle reverser as a 3-position switch
+                            # For buttons, use different buttons for forward/neutral/reverse
+                            # or process a hat switch/POV hat directional input
+                            changed, processed_value = self.input_mapper.process_reverser_switch_input(
+                                device_id, input_type, input_index, value, 
+                                self.state_tracker.states
+                            )
+                        else:
+                            # Normal input processing for all other functions
+                            changed, processed_value = self.input_mapper.process_input_value(
+                                function_name, device_id, input_type, input_index, value, 
+                                self.state_tracker.states
+                            )
                         
                         if changed:
                             # Get the Run8 function ID
@@ -225,7 +254,7 @@ class Run8ControlConductor:
                                 logger.debug(f"Queued command: {function_name} ({function_id}) = {processed_value}")
                         
                         # Update reverse axis settings from UI
-                        if input_type == 'Axis':
+                        if input_type == 'Axis' and function_name != "Reverser" or (function_name == "Reverser" and not self.reverser_switch_mode):
                             reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                             self.input_mapper.set_axis_reverse(function_name, reverse_setting)
                             
@@ -306,7 +335,12 @@ class Run8ControlConductor:
         
         self.waiting_for_input = True
         self.input_target_function = function_name
-        self.ui_manager.set_mapping_prompt(f"Move/press the input for '{function_name}' (5 second timeout)...")
+        
+        # Special prompt for reverser in switch mode
+        if function_name == "Reverser" and self.reverser_switch_mode:
+            self.ui_manager.set_mapping_prompt(f"Press the button/switch for '{function_name}' in 3-position switch mode (5 second timeout)...")
+        else:
+            self.ui_manager.set_mapping_prompt(f"Move/press the input for '{function_name}' (5 second timeout)...")
         
         # Start input detection in a separate thread
         detection_thread = threading.Thread(target=self._detect_input_thread)
@@ -354,7 +388,12 @@ class Run8ControlConductor:
     def load_mappings(self) -> None:
         """Load mappings from file"""
         try:
-            if self.input_mapper.load_mappings():
+            if self.input_mapper.load_mappings_from_csv():
+                # Get the reverser mode from the input mapper
+                self.reverser_switch_mode = self.input_mapper.get_reverser_switch_mode()
+                # Update UI with the loaded reverser mode
+                self.ui_manager.set_reverser_mode(self.reverser_switch_mode)
+                
                 self.update_mapping_displays()
                 self.ui_manager.set_mapping_prompt("Mappings loaded successfully")
                 logger.info("Mappings loaded successfully")
@@ -370,8 +409,15 @@ class Run8ControlConductor:
         try:
             # Update reverse axis settings from UI
             for function_name in self.input_mapper.get_mapped_functions():
+                if function_name == "Reverser" and self.reverser_switch_mode:
+                    # Skip reverse axis setting for reverser in switch mode
+                    continue
+                    
                 reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                 self.input_mapper.set_axis_reverse(function_name, reverse_setting)
+            
+            # Save the current reverser mode
+            self.input_mapper.set_reverser_switch_mode(self.reverser_switch_mode)
             
             if self.input_mapper.save_mappings():
                 self.ui_manager.set_mapping_prompt("Mappings saved successfully")
