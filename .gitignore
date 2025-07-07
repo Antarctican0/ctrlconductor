@@ -46,3 +46,6 @@ Thumbs.db
 input_mappings.csv
 *.log
 *.md
+build.bat
+quick_build.py
+Run8ControlConductor.exe
