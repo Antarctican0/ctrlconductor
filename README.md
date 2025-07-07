@@ -5,7 +5,6 @@
 1. **[📥 Download Latest Release](https://github.com/Antarctican0/ctrlconductor/releases/latest)**
 2. Extract the zip file
 3. Run `Run8ControlConductor.exe`
-4. See `USER_GUIDE.txt` for setup instructions
 
 ### Option 2: Run from Source
 1. Clone this repository
