@@ -42,7 +42,7 @@ def main():
     build_dir = Path("build")
     dist_dir = Path("dist")
     
-    # Clean previous builds
+    # Clean previous builds and cache
     if build_dir.exists():
         shutil.rmtree(build_dir)
         print("✓ Cleaned previous build directory")
@@ -51,60 +51,60 @@ def main():
         shutil.rmtree(dist_dir)
         print("✓ Cleaned previous dist directory")
     
-    # PyInstaller command
-    pyinstaller_cmd = [
-        "pyinstaller",
-        "--onefile",  # Create single executable file
-        "--windowed",  # Hide console window (GUI app)
-        "--name=Run8ControlConductor",
-        "--icon=icon.ico" if os.path.exists("icon.ico") else "",
-        "--add-data=input_mappings.csv;." if os.path.exists("input_mappings.csv") else "",
-        "--hidden-import=pygame",
-        "--hidden-import=tkinter",
-        "--hidden-import=tkinter.ttk",
-        "--hidden-import=tkinter.messagebox",
-        "--hidden-import=tkinter.filedialog",
-        "--hidden-import=config",
-        "--hidden-import=networking",
-        "--hidden-import=input_handler",
-        "--hidden-import=mapping_logic",
-        "--hidden-import=ui_components",
-        "--hidden-import=utils",
-        "--collect-all=pygame",
-        "main.py"
-    ]
+    # Clean Python cache directories to ensure fresh build
+    import glob
+    for cache_dir in glob.glob("**/__pycache__", recursive=True):
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir)
+    print("✓ Cleaned Python cache directories")
     
-    # Remove empty parameters
-    pyinstaller_cmd = [arg for arg in pyinstaller_cmd if arg]
+    # Check for icon file (optional)
+    if not os.path.exists("train.ico"):
+        print("⚠ train.ico not found in project root. Building without custom icon.")
+    else:
+        print("✓ train.ico found")
+        # Verify it's a proper .ico file by checking file header
+        try:
+            with open("train.ico", "rb") as f:
+                header = f.read(4)
+                if header[:2] != b'\x00\x00' or header[2:4] != b'\x01\x00':
+                    print("⚠ Warning: train.ico may not be a valid Windows icon file")
+                else:
+                    print("✓ train.ico appears to be a valid Windows icon file")
+        except Exception as e:
+            print(f"⚠ Warning: Could not verify train.ico format: {e}")
     
-    # Get the virtual environment path
-    venv_path = os.path.join(os.getcwd(), '.venv', 'Scripts', 'pyinstaller.exe')
-    
-    # Run PyInstaller using the spec file for better reliability
+    # Always use the .spec file for building, to ensure icon and all settings are correct
     spec_file = "Run8ControlConductor.spec"
+    venv_path = os.path.join(os.getcwd(), '.venv', 'Scripts', 'pyinstaller.exe')
     if os.path.exists(spec_file):
         if os.path.exists(venv_path):
             cmd_str = f'"{venv_path}" {spec_file}'
         else:
             cmd_str = f"pyinstaller {spec_file}"
-        
-        if not run_command(cmd_str, "Building executable with PyInstaller (using spec file)"):
+        if not run_command(cmd_str, "Building executable with PyInstaller (.spec file, includes icon)"):
             return False
     else:
-        # Fallback to command line approach
-        if os.path.exists(venv_path):
-            cmd_str = f'"{venv_path}" ' + " ".join(pyinstaller_cmd[1:])  # Skip 'pyinstaller' itself
-        else:
-            cmd_str = " ".join(pyinstaller_cmd)
-        
-        if not run_command(cmd_str, "Building executable with PyInstaller"):
-            return False
+        print(f"✗ Spec file {spec_file} not found. Please ensure it exists in the project root.")
+        return False
     
     # Check if executable was created
     exe_path = dist_dir / "Run8ControlConductor.exe"
     if exe_path.exists():
         print(f"✓ Executable created successfully: {exe_path}")
         print(f"  Size: {exe_path.stat().st_size / 1024 / 1024:.1f} MB")
+        
+        # Check if the icon was embedded properly
+        try:
+            import subprocess
+            result = subprocess.run(['powershell', '-Command', 
+                f'(Get-ItemProperty "{exe_path}").VersionInfo.FileDescription'], 
+                capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                print("✓ Executable properties accessible")
+        except Exception:
+            pass  # Icon verification failed, but continue
+            
     else:
         print("✗ Executable not found after build")
         return False
@@ -117,6 +117,11 @@ def main():
     
     # Copy executable to release directory
     shutil.copy(exe_path, release_dir / "Run8ControlConductor.exe")
+    
+    # Copy icon to release directory as well
+    if os.path.exists("train.ico"):
+        shutil.copy("train.ico", release_dir / "train.ico")
+        print("✓ Copied train.ico to release directory")
     
     # Create user guide
     user_guide_content = """# Run8 Control Conductor - User Guide
@@ -189,6 +194,17 @@ For support, visit: https://github.com/Antarctican0/ctrlconductor
     print(f"✓ Documentation: {release_dir / 'README.md'}")
     print("\nThe 'release' folder contains everything users need!")
     print("You can zip this folder and distribute it to users.")
+    
+    print("\n" + "=" * 60)
+    print("ICON TROUBLESHOOTING")
+    print("=" * 60)
+    print("If the executable icon doesn't appear correctly:")
+    print("1. Try renaming the .exe file to force Windows to refresh")
+    print("2. Clear Windows icon cache:")
+    print("   - Press Win+R, type 'ie4uinit.exe -show' and press Enter")
+    print("   - Or restart Windows Explorer (Ctrl+Shift+Esc > Restart)")
+    print("3. Verify train.ico is a proper Windows icon file with multiple sizes")
+    print("4. Check if antivirus software is interfering with the executable")
     
     return True
 

@@ -6,6 +6,7 @@ Handles joystick/gamepad device detection, management, and input processing.
 
 import pygame
 import time
+import threading
 from typing import Dict, List, Tuple, Optional, Any
 import logging
 
@@ -81,6 +82,8 @@ class InputManager:
         self.last_input_time = 0
         self.waiting_for_input = False
         self.input_detected_callback = None
+        self.detection_lock = threading.Lock()
+        self.detection_active = False
         
         # Initialize pygame
         try:
@@ -149,7 +152,7 @@ class InputManager:
     
     def detect_input(self, timeout: float = 5.0) -> Optional[Tuple[int, str, int]]:
         """
-        Detect input from enabled devices
+        Detect input from enabled devices with improved rapid succession handling
         
         Args:
             timeout: Maximum time to wait for input (seconds)
@@ -157,29 +160,21 @@ class InputManager:
         Returns:
             Tuple of (device_id, input_type, input_index) or None if no input
         """
-        if not self.enabled_devices:
-            return None
-        
-        self.waiting_for_input = True
-        start_time = time.time()
-        
-        # Store initial states
-        initial_states = {}
-        for device_id in self.enabled_devices:
-            if device_id not in self.devices:
-                continue
-            device = self.devices[device_id]
-            if not device.enabled:
-                continue
-            
-            initial_states[device_id] = {
-                'buttons': [device.joystick.get_button(i) for i in range(device.get_button_count())],
-                'axes': [device.joystick.get_axis(i) for i in range(device.get_axis_count())],
-                'hats': [device.joystick.get_hat(i) for i in range(device.get_hat_count())]
-            }
+        # Check if detection is already in progress
+        with self.detection_lock:
+            if self.detection_active:
+                logger.info("Input detection already in progress, skipping new request")
+                return None
+            self.detection_active = True
         
         try:
-            # Store baseline states after a brief settling period
+            if not self.enabled_devices:
+                return None
+            
+            self.waiting_for_input = True
+            start_time = time.time()
+            
+            # Store baseline states immediately (no initial delay)
             baseline_states = {}
             movement_detected = {}
             
@@ -191,14 +186,21 @@ class InputManager:
                 if not device.enabled:
                     continue
                 
+                pygame.event.pump()
+                baseline_states[device_id] = {
+                    'buttons': [device.joystick.get_button(i) for i in range(device.get_button_count())],
+                    'axes': [device.joystick.get_axis(i) for i in range(device.get_axis_count())],
+                    'hats': [device.joystick.get_hat(i) for i in range(device.get_hat_count())]
+                }
+                
                 movement_detected[device_id] = {}
                 for i in range(device.get_axis_count()):
                     movement_detected[device_id][f'axis_{i}'] = False
             
-            # Brief delay to let user prepare
-            time.sleep(0.3)
+            # Small delay to let any residual input settle
+            time.sleep(0.1)
             
-            # Establish baseline after delay
+            # Re-establish baseline after brief settling
             for device_id in self.enabled_devices:
                 if device_id not in self.devices:
                     continue
@@ -214,7 +216,9 @@ class InputManager:
                 }
             
             detection_start = time.time()
-            while time.time() - detection_start < (timeout - 0.3):  # Account for initial delay
+            axis_confirmation_times = {}  # Track when axis movement was first detected
+            
+            while time.time() - detection_start < (timeout - 0.1):  # Account for initial delay
                 pygame.event.pump()
                 
                 for device_id in self.enabled_devices:
@@ -229,47 +233,62 @@ class InputManager:
                         current = device.joystick.get_button(i)
                         baseline = baseline_states[device_id]['buttons'][i]
                         if current and not baseline:
+                            logger.info(f"Button {i} pressed on device {device_id}")
                             return (device_id, 'Button', i)
                     
-                    # Check axes with movement confirmation
+                    # Check axes with improved movement detection
                     for i in range(device.get_axis_count()):
                         current = device.joystick.get_axis(i)
                         baseline = baseline_states[device_id]['axes'][i]
                         movement_key = f'axis_{i}'
+                        axis_key = (device_id, i)
                         
                         # Detect significant movement
                         movement = abs(current - baseline)
                         if movement > DEADZONE:
+                            current_time = time.time()
                             if not movement_detected[device_id][movement_key]:
                                 # First time detecting movement on this axis
                                 movement_detected[device_id][movement_key] = True
-                                # Wait a bit to confirm sustained movement
-                                time.sleep(0.15)
-                                pygame.event.pump()
-                                confirmed = device.joystick.get_axis(i)
-                                # Check if movement is still significant
-                                if abs(confirmed - baseline) > DEADZONE * 0.7:  # Slightly lower threshold for confirmation
-                                    return (device_id, 'Axis', i)
-                                else:
-                                    # False alarm, reset detection for this axis
-                                    movement_detected[device_id][movement_key] = False
+                                axis_confirmation_times[axis_key] = current_time
+                                logger.info(f"Axis {i} movement detected on device {device_id}, confirming...")
+                            else:
+                                # Check if enough time has passed for confirmation
+                                if current_time - axis_confirmation_times.get(axis_key, 0) >= 0.1:
+                                    # Re-check movement to confirm it's sustained
+                                    pygame.event.pump()
+                                    confirmed = device.joystick.get_axis(i)
+                                    confirmed_movement = abs(confirmed - baseline)
+                                    if confirmed_movement > DEADZONE * 0.6:  # Lower threshold for confirmation
+                                        logger.info(f"Axis {i} movement confirmed on device {device_id}")
+                                        return (device_id, 'Axis', i)
+                                    else:
+                                        # Movement not sustained, reset
+                                        movement_detected[device_id][movement_key] = False
+                                        if axis_key in axis_confirmation_times:
+                                            del axis_confirmation_times[axis_key]
                         else:
                             # No significant movement, reset detection
                             movement_detected[device_id][movement_key] = False
+                            if axis_key in axis_confirmation_times:
+                                del axis_confirmation_times[axis_key]
                     
                     # Check hats (immediate response)
                     for i in range(device.get_hat_count()):
                         current = device.joystick.get_hat(i)
                         baseline = baseline_states[device_id]['hats'][i]
                         if current != baseline and current != (0, 0):
+                            logger.info(f"Hat {i} moved on device {device_id}")
                             return (device_id, 'Hat', i)
                 
-                time.sleep(0.02)  # Small delay to prevent excessive CPU usage
+                time.sleep(0.01)  # Smaller delay for more responsive detection
                 
         except Exception as e:
             logger.error(f"Error during input detection: {e}")
         finally:
             self.waiting_for_input = False
+            with self.detection_lock:
+                self.detection_active = False
         
         return None
     
@@ -323,6 +342,20 @@ class InputManager:
             logger.error(f"Error processing inputs: {e}")
         
         return inputs
+    
+    def cancel_input_detection(self) -> bool:
+        """
+        Cancel ongoing input detection
+        
+        Returns:
+            True if detection was cancelled, False if no detection was active
+        """
+        with self.detection_lock:
+            if self.detection_active:
+                self.waiting_for_input = False
+                logger.info("Input detection cancelled")
+                return True
+            return False
     
     def cleanup(self) -> None:
         """Cleanup resources"""

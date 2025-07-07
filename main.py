@@ -40,43 +40,43 @@ class Run8ControlConductor:
     def __init__(self):
         """Initialize the Run8 Control Conductor application"""
         logger.info("Initializing Run8 Control Conductor v3.0")
-        
+
         # Initialize main window
         self.root = tk.Tk()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
+
         # Initialize modules
         self.udp_client = UDPClient()
         self.input_manager = InputManager()
         self.input_mapper = InputMapper()
         self.ui_manager = UIManager(self.root)
         self.state_tracker = StateTracker()
-        
+
         # Initialize application state
         self.running = False
         self.input_thread: Optional[threading.Thread] = None
         self.input_timer: Optional[PeriodicTimer] = None
         self.udp_timer: Optional[PeriodicTimer] = None
-        
+
         # Input detection state
         self.waiting_for_input = False
         self.input_target_function: Optional[str] = None
         self.pending_commands: Dict[int, int] = {}  # function_id -> value
-        
+
         # Reverser mode (default to axis)
         self.reverser_switch_mode = False
-        
+
         # Setup UI callbacks
         self._setup_ui_callbacks()
-        
+
         # Initialize with default values
         self.ui_manager.set_ip_address(DEFAULT_IP)
         self.ui_manager.set_port(DEFAULT_PORT)
-        
+
         # Load saved mappings and refresh devices
         self.load_mappings()
         self.refresh_devices()
-        
+
         logger.info("Run8 Control Conductor initialized successfully")
     
     def _setup_ui_callbacks(self) -> None:
@@ -212,52 +212,73 @@ class Run8ControlConductor:
         """Process inputs from all enabled devices"""
         if not self.running:
             return
-        
+
         try:
             # Get current mappings
             mappings = self.input_mapper.get_all_mappings()
             if not mappings:
                 return
-            
+
             # Process inputs from input manager
             inputs = self.input_manager.process_inputs()
-            
+
+            # --- 3-way reverser switch mode integration ---
+            if self.reverser_switch_mode:
+                # Build input_state dict: (device_id, input_type, input_index) -> value
+                input_state = {}
+                for device_id, input_type, input_index, value in inputs:
+                    input_state[(device_id, input_type, input_index)] = value
+                # Update reverser state from 3-way inputs
+                changed = self.input_mapper.update_reverser_3way_state_from_inputs(input_state)
+                if changed:
+                    # Get the Run8 function ID for the reverser
+                    function_id = self.input_mapper.function_dict.get("Reverser Lever")
+                    if function_id:
+                        # Map state to correct Run8 values: forward=255, neutral=127, reverse=0
+                        state = getattr(self.input_mapper, 'reverser_state', None)
+                        reverser_positions = getattr(self.input_mapper, 'reverser_positions', {
+                            "forward": 255,
+                            "neutral": 127,
+                            "reverse": 0
+                        })
+                        value = reverser_positions.get(state, 127)
+                        self.pending_commands[function_id] = value
+                        logger.info(f"Queued 3-way reverser command: Reverser Lever ({function_id}) = {value} (state: {state})")
+
+            # --- Normal input processing ---
             for device_id, input_type, input_index, value in inputs:
                 # Find functions mapped to this input
                 for function_name, (mapped_device, mapped_type, mapped_index) in mappings.items():
                     if (device_id == mapped_device and 
                         input_type == mapped_type and 
                         input_index == mapped_index):
-                        
-                        # Special handling for reverser in switch mode
-                        if function_name == "Reverser Lever" and self.reverser_switch_mode and input_type == "Button":
-                            # Handle reverser as a 3-position switch
-                            # For buttons, use different buttons for forward/neutral/reverse
-                            # or process a hat switch/POV hat directional input
-                            changed, processed_value = self.input_mapper.process_reverser_switch_input(
-                                device_id, input_type, input_index, value, 
-                                self.state_tracker.states
-                            )
-                        else:
-                            # Normal input processing for all other functions
-                            changed, processed_value = self.input_mapper.process_input_value(
-                                function_name, device_id, input_type, input_index, value, 
-                                self.state_tracker.states
-                            )
-                        
+
+                        # Special handling for reverser in switch mode (skip normal processing for 3-way mode)
+                        if function_name == "Reverser Lever" and self.reverser_switch_mode:
+                            continue  # Already handled above
+
+                        # Normal input processing for all other functions
+                        changed, processed_value = self.input_mapper.process_input_value(
+                            function_name, device_id, input_type, input_index, value, 
+                            self.state_tracker.states
+                        )
+
                         if changed:
                             # Get the Run8 function ID
                             function_id = self.input_mapper.function_dict.get(function_name)
                             if function_id:
                                 # Queue the command for sending
                                 self.pending_commands[function_id] = processed_value
-                                logger.debug(f"Queued command: {function_name} ({function_id}) = {processed_value}")
-                        
+                                if function_name == "Reverser Lever":
+                                    logger.info(f"Queued lever reverser command: {function_name} ({function_id}) = {processed_value}")
+                                else:
+                                    logger.debug(f"Queued command: {function_name} ({function_id}) = {processed_value}")
+
                         # Update reverse axis settings from UI
                         if input_type == 'Axis' and function_name != "Reverser Lever" or (function_name == "Reverser Lever" and not self.reverser_switch_mode):
                             reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                             self.input_mapper.set_axis_reverse(function_name, reverse_setting)
-                            
+
         except Exception as e:
             logger.error(f"Error processing inputs: {e}")
     
@@ -270,7 +291,11 @@ class Run8ControlConductor:
             # Send all pending commands
             for function_id, value in self.pending_commands.items():
                 if self.udp_client.send_command(function_id, value):
-                    logger.debug(f"Sent UDP command: function={function_id}, value={value}")
+                    # Log reverser commands at info level for debugging
+                    if function_id == self.input_mapper.function_dict.get("Reverser Lever"):
+                        logger.info(f"Sent UDP reverser command: function={function_id}, value={value}")
+                    else:
+                        logger.debug(f"Sent UDP command: function={function_id}, value={value}")
                 else:
                     logger.warning(f"Failed to send UDP command: function={function_id}, value={value}")
             
@@ -319,57 +344,114 @@ class Run8ControlConductor:
             logger.error(f"Error toggling device {device_index}: {e}")
     
     def map_input(self, function_name: str) -> None:
-        """Start input mapping for a specific function"""
+        """Start input mapping for a specific function or reverser 3-way position"""
         if self.running:
             self.ui_manager.show_message("Info", "Please stop the application before mapping inputs", "info")
             return
-        
         if self.waiting_for_input:
             self.ui_manager.show_message("Info", "Already waiting for input - please provide input or wait for timeout", "info")
             return
-        
         enabled_devices = self.ui_manager.get_enabled_devices()
         if not enabled_devices:
             self.ui_manager.show_message("Error", "Please enable at least one input device", "error")
             return
         
+        # Check if input detection is already active to prevent rapid successive mapping
+        if hasattr(self.input_manager, 'detection_active') and self.input_manager.detection_active:
+            self.ui_manager.show_message("Info", "Input detection already in progress. Please wait for it to complete.", "info")
+            return
+            
         self.waiting_for_input = True
         self.input_target_function = function_name
-        
-        # Special prompt for reverser in switch mode
-        if function_name == "Reverser Lever" and self.reverser_switch_mode:
+        # Special prompt for reverser 3-way
+        if function_name.startswith("Reverser 3way "):
+            pos = function_name.split(" ")[-1].capitalize()
+            self.ui_manager.set_mapping_prompt(f"Press the button/switch for 'Reverser {pos}' (5 second timeout)...")
+        elif function_name == "Reverser Lever" and self.reverser_switch_mode:
             self.ui_manager.set_mapping_prompt(f"Press the button/switch for '{function_name}' in 3-position switch mode (5 second timeout)...")
         else:
             self.ui_manager.set_mapping_prompt(f"Ready - now move/press the input for '{function_name}' (5 second timeout)...")
-        
-        # Start input detection in a separate thread
-        detection_thread = threading.Thread(target=self._detect_input_thread)
+        detection_thread = threading.Thread(target=lambda: self._detect_input_thread_with_validation(function_name))
         detection_thread.daemon = True
         detection_thread.start()
     
-    def _detect_input_thread(self) -> None:
-        """Thread function for input detection"""
+
+    def _detect_input_thread_with_validation(self, function_name: str) -> None:
+        """Thread function for input detection with input type validation"""
         try:
             detected_input = self.input_manager.detect_input(timeout=5.0)
-            
             if detected_input and self.input_target_function:
-                device_id, input_type, input_index = detected_input
-                
-                # Add the mapping
-                if self.input_mapper.add_mapping(self.input_target_function, device_id, input_type, input_index):
-                    # Update UI display
-                    display_text = format_input_display(device_id, input_type, input_index)
-                    self.ui_manager.update_mapping_display(self.input_target_function, display_text)
-                    
-                    self.ui_manager.set_mapping_prompt(f"Successfully mapped '{self.input_target_function}' to {display_text}")
-                    logger.info(f"Mapped {self.input_target_function} to {display_text}")
+                device_id, detected_input_type, input_index = detected_input
+                # Determine required input type for this function
+                from config import FunctionMapping
+                required_type = FunctionMapping.INPUT_TYPES.get(function_name, 'toggle')
+                # Normalize input types for comparison
+                detected_type_norm = detected_input_type.lower()
+                required_type_norm = required_type.lower()
+                # Validation logic
+                valid = True
+                error_msg = None
+                # For reverser 3way, only allow Button
+                if function_name.startswith("Reverser 3way "):
+                    if detected_type_norm != 'button':
+                        valid = False
+                        error_msg = "Reverser 3-way positions can only be mapped to buttons/switches. Please try again with a button input."
+                # For lever/axis functions, only allow Axis
+                elif required_type_norm == 'lever':
+                    if detected_type_norm != 'axis':
+                        valid = False
+                        error_msg = f"'{function_name}' can only be mapped to an axis/lever input. Please try again with an axis input."
+                # For momentary/toggle, only allow Button
+                elif required_type_norm in ('momentary', 'toggle'):
+                    if detected_type_norm != 'button':
+                        valid = False
+                        error_msg = f"'{function_name}' can only be mapped to a button/switch input. Please try again with a button input."
+                # For 3way/4way, only allow Button
+                elif required_type_norm in ('3way', '4way'):
+                    if detected_type_norm != 'button':
+                        valid = False
+                        error_msg = f"'{function_name}' can only be mapped to a button/switch input. Please try again with a button input."
+                if not valid:
+                    self.ui_manager.show_message("Invalid Input Type", error_msg or "Incompatible input type.", "error")
+                    self.ui_manager.set_mapping_prompt("Mapping cancelled: incompatible input type.")
+                    return
+                # --- Existing logic follows ---
+                if function_name.startswith("Reverser 3way "):
+                    pos = function_name.split(" ")[-1]
+                    self.input_mapper.set_reverser_3way_mapping(pos, device_id, detected_input_type, input_index)
+                    display_text = format_input_display(device_id, detected_input_type, input_index)
+                    self.ui_manager.update_mapping_display(function_name, display_text)
+                    self.ui_manager.set_mapping_prompt(f"Successfully mapped 'Reverser {pos.capitalize()}' to {display_text}")
+                    logger.info(f"Mapped Reverser 3way {pos} to {display_text}")
                 else:
-                    self.ui_manager.set_mapping_prompt(f"Failed to map '{self.input_target_function}'")
-                    logger.error(f"Failed to map {self.input_target_function}")
+                    existing_func = self.input_mapper.find_existing_mapping(device_id, detected_input_type, input_index)
+                    if existing_func and existing_func != function_name:
+                        msg = (f"This input is already mapped to '{existing_func}'.\n\n"
+                               "Do you want to cancel, clear the other mapping, or keep both?")
+                        choice = self.ui_manager.show_message(
+                            "Input Already Mapped",
+                            msg,
+                            msg_type="question_with_options"
+                        )
+                        if choice == 'cancel':
+                            self.ui_manager.set_mapping_prompt("Mapping cancelled by user.")
+                            return
+                        elif choice == 'clear':
+                            self.input_mapper.remove_mapping(existing_func)
+                            self.ui_manager.update_mapping_display(existing_func, "Not mapped")
+                            logger.info(f"Cleared mapping for {existing_func} to allow remapping.")
+                        # else: keep both (fall through)
+                    if self.input_mapper.add_mapping(function_name, device_id, detected_input_type, input_index):
+                        display_text = format_input_display(device_id, detected_input_type, input_index)
+                        self.ui_manager.update_mapping_display(function_name, display_text)
+                        self.ui_manager.set_mapping_prompt(f"Successfully mapped '{function_name}' to {display_text}")
+                        logger.info(f"Mapped {function_name} to {display_text}")
+                    else:
+                        self.ui_manager.set_mapping_prompt(f"Failed to map '{function_name}'")
+                        logger.error(f"Failed to map {function_name}")
             else:
                 self.ui_manager.set_mapping_prompt("No input detected - timeout reached")
                 logger.info("Input detection timed out")
-                
         except Exception as e:
             logger.error(f"Error during input detection: {e}")
             self.ui_manager.set_mapping_prompt(f"Error during input detection: {e}")
@@ -499,6 +581,26 @@ class Run8ControlConductor:
             raise
         finally:
             logger.info("Main application loop ended")
+    
+    def cancel_input_mapping(self) -> None:
+        """Cancel ongoing input mapping"""
+        if self.waiting_for_input:
+            if hasattr(self.input_manager, 'cancel_input_detection'):
+                if self.input_manager.cancel_input_detection():
+                    self.ui_manager.set_mapping_prompt("Input mapping cancelled by user")
+                    self.waiting_for_input = False
+                    self.input_target_function = None
+                    logger.info("Input mapping cancelled by user")
+                else:
+                    self.ui_manager.set_mapping_prompt("No active input detection to cancel")
+            else:
+                # Fallback for older version
+                self.waiting_for_input = False
+                self.input_target_function = None
+                self.ui_manager.set_mapping_prompt("Input mapping cancelled by user")
+                logger.info("Input mapping cancelled by user (fallback)")
+        else:
+            self.ui_manager.set_mapping_prompt("No active input mapping to cancel")
 
 
 def main():

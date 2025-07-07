@@ -20,6 +20,64 @@ DEADZONE = 0.7
 
 
 class InputMapper:
+    def update_reverser_3way_state_from_inputs(self, input_state: Dict[Tuple[int, str, int], Any]) -> bool:
+        """
+        Poll all mapped 3-way reverser inputs and update the reverser state if any mapped input is active.
+        Args:
+            input_state: Dict mapping (device_id, input_type, input_index) to current value (e.g., 1 for button pressed)
+        Returns:
+            True if the reverser state changed, False otherwise
+        """
+        # Only use 3-way mappings if switch mode is enabled
+        if not self.get_reverser_switch_mode():
+            return False
+        if not hasattr(self, 'reverser_3way_mappings') or not self.reverser_3way_mappings:
+            return False
+
+        prev_state = self.reverser_state
+        # Priority: forward > neutral > reverse (if multiple pressed, forward wins, etc.)
+        active_pos = None
+        for pos in ("forward", "neutral", "reverse"):
+            mapping = self.reverser_3way_mappings.get(pos)
+            if not mapping:
+                continue
+            device_id, input_type, input_index = mapping
+            value = input_state.get((device_id, input_type, input_index))
+            if input_type == "Button":
+                # Button is considered active if value == 1 (pressed)
+                if value == 1:
+                    active_pos = pos
+                    break  # Highest priority found
+            elif input_type == "Hat":
+                # For hats, value should match direction
+                if pos == "forward" and value == (0, 1):
+                    active_pos = pos
+                    break
+                elif pos == "neutral" and value == (0, 0):
+                    active_pos = pos
+                    break
+                elif pos == "reverse" and value == (0, -1):
+                    active_pos = pos
+                    break
+
+        # Always set the reverser state to the currently active position (or keep previous if none pressed)
+        if active_pos is not None:
+            changed = (self.reverser_state != active_pos)
+            self.reverser_state = active_pos
+            if changed:
+                logger.info(f"3-way reverser state changed to: {active_pos}")
+            return changed
+        # If no button/hat is pressed, do not change the state (latch last position)
+        return False
+    def find_existing_mapping(self, device_id: int, input_type: str, input_index: int) -> Optional[str]:
+        """
+        Find if an input is already mapped to a function.
+        Returns the function name if found, else None.
+        """
+        for func, mapping in self.function_input_map.items():
+            if mapping == (device_id, input_type, input_index):
+                return func
+        return None
     """Handles input mapping and processing logic"""
     
     def __init__(self, mapping_file: Optional[str] = None):
@@ -44,13 +102,13 @@ class InputMapper:
         self.reverser_switch_mode = False
         self.reverser_state = "neutral"  # Current reverser position
         self.reverser_positions = {
-            "forward": 65535,   # Full forward
-            "neutral": 32767,   # Center position
-            "reverse": 0        # Full reverse
+            "forward": 255,     # Forward (uint16 max for Run8)
+            "neutral": 127,    # Neutral (midpoint)
+            "reverse": 0       # Reverse (uint16 min)
         }
         
-        # State tracking for reverser switch
-        self.reverser_state = "neutral"  # Current state: forward, neutral, reverse
+        # 3-way reverser mappings
+        self.reverser_3way_mappings = {}  # position -> (device_id, input_type, input_index)
     
     def load_mappings_from_csv(self, file_path: Optional[str] = None) -> bool:
         """
@@ -69,6 +127,8 @@ class InputMapper:
             return False
         
         try:
+            # Always clear 3-way mappings before loading
+            self.reverser_3way_mappings = {}
             with open(mapping_file, 'r', newline='', encoding='utf-8') as file:
                 reader = csv.DictReader(file)
                 for row in reader:
@@ -77,13 +137,26 @@ class InputMapper:
                     input_type = row.get('Type')
                     input_index = row.get('Index')
                     reverse_axis = row.get('Reverse', 'False')
-                    
+
                     # Handle special reverser switch mode row
                     if function_name == '__REVERSER_SWITCH_MODE__':
                         self.reverser_switch_mode = str(reverse_axis).lower() == 'true'
                         logger.debug(f"Loaded reverser switch mode: {self.reverser_switch_mode}")
                         continue
-                    
+
+                    # Handle reverser 3-way switch mappings
+                    if function_name and function_name.startswith('__REVERSER_3WAY_'):
+                        pos = function_name.replace('__REVERSER_3WAY_', '').lower().replace('__', '')
+                        try:
+                            if device_id is not None and input_index is not None and input_type is not None:
+                                device_id_int = int(device_id)
+                                input_index_int = int(input_index)
+                                self.set_reverser_3way_mapping(pos, device_id_int, str(input_type), input_index_int)
+                                logger.debug(f"Loaded reverser 3-way mapping: {pos} -> {device_id_int}:{input_type}:{input_index_int}")
+                        except Exception as e:
+                            logger.error(f"Invalid reverser 3-way mapping for {pos}: {e}")
+                        continue
+
                     if all([function_name is not None, device_id is not None, input_type is not None, input_index is not None]):
                         try:
                             function_name_str = str(function_name)
@@ -101,10 +174,10 @@ class InputMapper:
                             logger.debug(f"Loaded mapping: {function_name_str} -> {device_id_int}:{input_type_str}:{input_index_int}")
                         except (ValueError, TypeError) as e:
                             logger.error(f"Invalid mapping data for {function_name}: {e}")
-                            
+
             logger.info(f"Loaded {len(self.function_input_map)} mappings from {mapping_file}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to load mappings from {mapping_file}: {e}")
             return False
@@ -136,7 +209,17 @@ class InputMapper:
                         'Index': input_index,
                         'Reverse': self.reverse_axis_settings.get(function_name, False)
                     })
-                
+                # Save reverser 3-way switch mappings if present
+                if hasattr(self, 'reverser_3way_mappings'):
+                    for pos, mapping in self.reverser_3way_mappings.items():
+                        device_id, input_type, input_index = mapping
+                        writer.writerow({
+                            'Function': f'__REVERSER_3WAY_{pos.upper()}__',
+                            'Device': device_id,
+                            'Type': input_type,
+                            'Index': input_index,
+                            'Reverse': ''
+                        })
                 # Save reverser switch mode as a special row
                 writer.writerow({
                     'Function': '__REVERSER_SWITCH_MODE__',
@@ -278,31 +361,44 @@ class InputMapper:
                 return True, notch
                 
         elif function_name == 'Reverser Lever':
+            # Reverser axis: -0.33 to +0.33 is neutral, outside is reverse/forward
             if axis_val <= -0.33:
-                reverser_val = 0
+                reverser_val = 0  # Reverse
             elif axis_val >= 0.33:
-                reverser_val = 255
+                reverser_val = 255  # Forward
             else:
-                reverser_val = 127
+                reverser_val = 127  # Neutral
             prev_reverser = prev_states.get(mapping_key, -1)
             if reverser_val != prev_reverser:
                 prev_states[mapping_key] = reverser_val
+                position_name = "reverse" if reverser_val == 0 else ("forward" if reverser_val == 255 else "neutral")
+                logger.info(f"Lever reverser changed to: {position_name} (value: {reverser_val}, axis: {axis_val:.3f})")
                 return True, reverser_val
                 
         elif function_name == 'Dyn Brake Lever':
-            if axis_val <= -0.95:
-                dyn_val = 0
+            # Dynamic brake: released at -0.95, full application at +1.0
+            if axis_val <= -0.90:  # Slightly less strict than -0.95 for better detection
+                dyn_val = 0  # Released
             else:
-                norm = (axis_val - (-0.95)) / (1.0 - (-0.95))
+                # Map from -0.90 to +1.0 to range 1-255
+                norm = (axis_val - (-0.90)) / (1.0 - (-0.90))
                 norm = max(0.0, min(1.0, norm))
-                dyn_val = int(round(norm * 254)) + 1
+                dyn_val = int(round(norm * 254)) + 1  # Range 1-255
             prev_dyn = prev_states.get(mapping_key, -1)
             if dyn_val != prev_dyn:
                 prev_states[mapping_key] = dyn_val
                 return True, dyn_val
                 
         elif function_name in ('Independent Brake Lever', 'Train Brake Lever'):
-            brake_val = int(round(((axis_val + 1.0) / 2.0) * 255))
+            # Brake levers: Use full range with deadzone at extremes
+            if axis_val <= -0.98:
+                brake_val = 0  # Fully released
+            elif axis_val >= 0.98:
+                brake_val = 255  # Fully applied
+            else:
+                # Map -0.98 to +0.98 to 0-255 with smooth scaling
+                normalized = (axis_val + 0.98) / (0.98 * 2)
+                brake_val = int(round(normalized * 255))
             brake_val = max(0, min(255, brake_val))
             prev_brake = prev_states.get(mapping_key, -1)
             if brake_val != prev_brake:
@@ -469,7 +565,43 @@ class InputMapper:
         """Get the current reverser switch mode"""
         return self.reverser_switch_mode
     
-    # (Duplicate methods removed. The original implementations above are retained.)
+    # --- Reverser 3-way switch support ---
+    def set_reverser_3way_mapping(self, position: str, device_id: int, input_type: str, input_index: int):
+        """Set the mapping for a reverser 3-way switch position ('forward', 'neutral', 'reverse')."""
+        if not hasattr(self, 'reverser_3way_mappings'):
+            self.reverser_3way_mappings = {}
+        self.reverser_3way_mappings[position] = (device_id, input_type, input_index)
+
+    def get_reverser_3way_mapping(self, position: str):
+        """Get the mapping for a reverser 3-way switch position."""
+        if hasattr(self, 'reverser_3way_mappings'):
+            return self.reverser_3way_mappings.get(position)
+        return None
+
+    def clear_reverser_3way_mapping(self, position: str):
+        """Clear the mapping for a reverser 3-way switch position."""
+        if hasattr(self, 'reverser_3way_mappings') and position in self.reverser_3way_mappings:
+            del self.reverser_3way_mappings[position]
+
+    def get_all_reverser_3way_mappings(self):
+        """Return all 3-way switch mappings as a dict."""
+        if hasattr(self, 'reverser_3way_mappings'):
+            return dict(self.reverser_3way_mappings)
+        return {}
+
+    def process_reverser_3way_input(self, device_id: int, input_type: str, input_index: int, value: Any) -> Optional[str]:
+        """Return 'forward', 'neutral', or 'reverse' if the input matches a mapped 3-way switch and is active."""
+        if not hasattr(self, 'reverser_3way_mappings'):
+            return None
+        for pos, mapping in self.reverser_3way_mappings.items():
+            if mapping == (device_id, input_type, input_index):
+                # For buttons, value==1 means pressed
+                if input_type == 'Button' and value:
+                    return pos
+                # For hats, value matches direction
+                if input_type == 'Hat' and value:
+                    return pos
+        return None
     
     def get_all_mappings(self) -> Dict[str, Tuple[int, str, int]]:
         """Get all current mappings"""
@@ -490,3 +622,32 @@ class InputMapper:
         all_functions = set(self.function_dict.keys())
         mapped_functions = set(self.function_input_map.keys())
         return list(all_functions - mapped_functions)
+    
+    def process_reverser_lever_axis(self, value: float) -> int:
+        """
+        Process reverser lever axis value to appropriate simulator value
+        Args:
+            value: Axis value from -1.0 to 1.0
+        Returns:
+            Simulator value (0-255)
+        """
+        # Add a small deadzone around center
+        if -0.2 <= value <= 0.2:
+            # Neutral zone
+            reverser_val = 127
+            state_name = "neutral"
+        elif value > 0.2:
+            # Forward
+            # Scale from 0.2->1.0 to 128->255
+            reverser_val = int(127 + (value - 0.2) * 160)
+            reverser_val = min(255, max(128, reverser_val))
+            state_name = "forward"
+        else:
+            # Reverse
+            # Scale from -0.2->-1.0 to 126->0
+            reverser_val = int(127 - (abs(value) - 0.2) * 160)
+            reverser_val = min(126, max(0, reverser_val))
+            state_name = "reverse"
+        
+        logger.info(f"Reverser lever: axis={value:.2f}, state={state_name}, value={reverser_val}")
+        return reverser_val
