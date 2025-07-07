@@ -5,7 +5,7 @@ Handles all UI creation, management, and theming for the main application window
 """
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import tkinter.ttk as ttk
 from typing import Dict, List, Callable, Optional, Any
 import logging
@@ -37,6 +37,7 @@ class UIManager:
         self.device_vars: List[tk.BooleanVar] = []
         self.device_checkboxes: List[tk.Checkbutton] = []
         self.reverse_axis_vars: Dict[str, tk.BooleanVar] = {}
+        self.reverse_axis_checkboxes: Dict[str, tk.Checkbutton] = {}  # Store checkbox references
         self.mapping_labels: Dict[str, tk.Label] = {}
         self.mapping_buttons: Dict[str, tk.Button] = {}
         self.mapping_prompt: Optional[tk.StringVar] = None
@@ -309,22 +310,42 @@ class UIManager:
         self.reverser_mode_frame = ttk.Frame(self.mapping_frame)
         self.reverser_mode_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Label(self.reverser_mode_frame, text="Reverser Mode:").pack(side=tk.LEFT)
+        ttk.Label(self.reverser_mode_frame, text="Reverser Control Mode:").pack(side=tk.LEFT)
         
         self.reverser_mode_checkbox = ttk.Checkbutton(
             self.reverser_mode_frame,
-            text="Use 3-position switch mode",
+            text="Use 3-position switch (instead of axis/lever)",
             variable=self.reverser_mode_var,
             command=self._on_reverser_mode_change
         )
         self.reverser_mode_checkbox.pack(side=tk.LEFT, padx=10)
         
+        # Add explanation label
+        ttk.Label(
+            self.reverser_mode_frame, 
+            text="(Check this if you want to use buttons instead of a lever for the reverser)",
+            font=("TkDefaultFont", 8)
+        ).pack(side=tk.LEFT, padx=10)
+        
         ttk.Separator(self.mapping_frame).pack(fill=tk.X, padx=5, pady=5)
     
     def _on_reverser_mode_change(self):
         """Handle reverser mode toggle change"""
+        switch_mode = self.reverser_mode_var.get()
+        
+        # Show/hide the reverse checkbox for Reverser Lever based on mode
+        if "Reverser Lever" in self.reverse_axis_checkboxes:
+            reverse_checkbox = self.reverse_axis_checkboxes["Reverser Lever"]
+            if switch_mode:
+                # Hide reverse checkbox in switch mode
+                reverse_checkbox.pack_forget()
+            else:
+                # Show reverse checkbox in axis mode
+                reverse_checkbox.pack(side="left", padx=10)
+        
+        # Call the main application callback
         if self.reverser_mode_callback:
-            self.reverser_mode_callback(self.reverser_mode_var.get())
+            self.reverser_mode_callback(switch_mode)
     
     def populate_device_list(self, devices: List[Any]) -> None:
         """
@@ -433,6 +454,11 @@ class UIManager:
             )
             reverse_checkbox.pack(side="left", padx=10)
             self.reverse_axis_vars[function_name] = reverse_var
+            self.reverse_axis_checkboxes[function_name] = reverse_checkbox
+            
+            # Hide reverse checkbox for Reverser Lever if in switch mode
+            if function_name == "Reverser Lever" and self.reverser_mode_var.get():
+                reverse_checkbox.pack_forget()
 
         buttons_frame = tk.Frame(func_frame, bg=self.theme.DARK_ACCENT)
         buttons_frame.pack(side="right", padx=5)
@@ -594,6 +620,16 @@ class UIManager:
     def set_reverser_mode(self, switch_mode: bool):
         """Update the UI to reflect the current reverser mode"""
         self.reverser_mode_var.set(switch_mode)
+        
+        # Update the reverse checkbox visibility for Reverser Lever
+        if "Reverser Lever" in self.reverse_axis_checkboxes:
+            reverse_checkbox = self.reverse_axis_checkboxes["Reverser Lever"]
+            if switch_mode:
+                # Hide reverse checkbox in switch mode
+                reverse_checkbox.pack_forget()
+            else:
+                # Show reverse checkbox in axis mode
+                reverse_checkbox.pack(side="left", padx=10)
     
     # Internal callback methods
     def _on_start(self) -> None:
@@ -614,12 +650,32 @@ class UIManager:
     def _on_load_mappings(self) -> None:
         """Handle load mappings button click"""
         if self.on_load_mappings_callback:
-            self.on_load_mappings_callback()
+            # Show file dialog to select mapping file to load
+            file_path = filedialog.askopenfilename(
+                title="Load Input Mappings",
+                defaultextension=".csv",
+                filetypes=[
+                    ("CSV files", "*.csv"),
+                    ("All files", "*.*")
+                ]
+            )
+            if file_path:
+                self.on_load_mappings_callback(file_path)
     
     def _on_save_mappings(self) -> None:
         """Handle save mappings button click"""
         if self.on_save_mappings_callback:
-            self.on_save_mappings_callback()
+            # Show file dialog to select where to save mapping file
+            file_path = filedialog.asksaveasfilename(
+                title="Save Input Mappings",
+                defaultextension=".csv",
+                filetypes=[
+                    ("CSV files", "*.csv"),
+                    ("All files", "*.*")
+                ]
+            )
+            if file_path:
+                self.on_save_mappings_callback(file_path)
     
     def _on_clear_mappings(self) -> None:
         """Handle clear mappings button click"""

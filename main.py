@@ -230,7 +230,7 @@ class Run8ControlConductor:
                         input_index == mapped_index):
                         
                         # Special handling for reverser in switch mode
-                        if function_name == "Reverser" and self.reverser_switch_mode and input_type == "Button":
+                        if function_name == "Reverser Lever" and self.reverser_switch_mode and input_type == "Button":
                             # Handle reverser as a 3-position switch
                             # For buttons, use different buttons for forward/neutral/reverse
                             # or process a hat switch/POV hat directional input
@@ -254,7 +254,7 @@ class Run8ControlConductor:
                                 logger.debug(f"Queued command: {function_name} ({function_id}) = {processed_value}")
                         
                         # Update reverse axis settings from UI
-                        if input_type == 'Axis' and function_name != "Reverser" or (function_name == "Reverser" and not self.reverser_switch_mode):
+                        if input_type == 'Axis' and function_name != "Reverser Lever" or (function_name == "Reverser Lever" and not self.reverser_switch_mode):
                             reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                             self.input_mapper.set_axis_reverse(function_name, reverse_setting)
                             
@@ -337,10 +337,10 @@ class Run8ControlConductor:
         self.input_target_function = function_name
         
         # Special prompt for reverser in switch mode
-        if function_name == "Reverser" and self.reverser_switch_mode:
+        if function_name == "Reverser Lever" and self.reverser_switch_mode:
             self.ui_manager.set_mapping_prompt(f"Press the button/switch for '{function_name}' in 3-position switch mode (5 second timeout)...")
         else:
-            self.ui_manager.set_mapping_prompt(f"Move/press the input for '{function_name}' (5 second timeout)...")
+            self.ui_manager.set_mapping_prompt(f"Ready - now move/press the input for '{function_name}' (5 second timeout)...")
         
         # Start input detection in a separate thread
         detection_thread = threading.Thread(target=self._detect_input_thread)
@@ -385,31 +385,39 @@ class Run8ControlConductor:
         else:
             logger.warning(f"No mapping found for {function_name}")
     
-    def load_mappings(self) -> None:
+    def load_mappings(self, file_path: Optional[str] = None) -> None:
         """Load mappings from file"""
         try:
-            if self.input_mapper.load_mappings_from_csv():
+            if self.input_mapper.load_mappings_from_csv(file_path):
                 # Get the reverser mode from the input mapper
                 self.reverser_switch_mode = self.input_mapper.get_reverser_switch_mode()
                 # Update UI with the loaded reverser mode
                 self.ui_manager.set_reverser_mode(self.reverser_switch_mode)
                 
                 self.update_mapping_displays()
-                self.ui_manager.set_mapping_prompt("Mappings loaded successfully")
-                logger.info("Mappings loaded successfully")
+                if file_path:
+                    self.ui_manager.set_mapping_prompt(f"Mappings loaded from {file_path}")
+                    logger.info(f"Mappings loaded from {file_path}")
+                else:
+                    self.ui_manager.set_mapping_prompt("Default mappings loaded successfully")
+                    logger.info("Default mappings loaded successfully")
             else:
-                self.ui_manager.set_mapping_prompt("No saved mappings found")
-                logger.info("No saved mappings found")
+                if file_path:
+                    self.ui_manager.set_mapping_prompt(f"No mappings found in {file_path}")
+                    logger.info(f"No mappings found in {file_path}")
+                else:
+                    self.ui_manager.set_mapping_prompt("No saved mappings found")
+                    logger.info("No saved mappings found")
         except Exception as e:
             logger.error(f"Error loading mappings: {e}")
             self.ui_manager.show_message("Error", f"Failed to load mappings: {e}", "error")
     
-    def save_mappings(self) -> None:
+    def save_mappings(self, file_path: Optional[str] = None) -> None:
         """Save mappings to file"""
         try:
             # Update reverse axis settings from UI
             for function_name in self.input_mapper.get_mapped_functions():
-                if function_name == "Reverser" and self.reverser_switch_mode:
+                if function_name == "Reverser Lever" and self.reverser_switch_mode:
                     # Skip reverse axis setting for reverser in switch mode
                     continue
                     
@@ -419,9 +427,13 @@ class Run8ControlConductor:
             # Save the current reverser mode
             self.input_mapper.set_reverser_switch_mode(self.reverser_switch_mode)
             
-            if self.input_mapper.save_mappings():
-                self.ui_manager.set_mapping_prompt("Mappings saved successfully")
-                logger.info("Mappings saved successfully")
+            if self.input_mapper.save_mappings(file_path):
+                if file_path:
+                    self.ui_manager.set_mapping_prompt(f"Mappings saved to {file_path}")
+                    logger.info(f"Mappings saved to {file_path}")
+                else:
+                    self.ui_manager.set_mapping_prompt("Mappings saved successfully")
+                    logger.info("Mappings saved successfully")
             else:
                 self.ui_manager.set_mapping_prompt("Failed to save mappings")
                 logger.error("Failed to save mappings")

@@ -42,6 +42,7 @@ class InputMapper:
         
         # Reverser switch mode settings
         self.reverser_switch_mode = False
+        self.reverser_state = "neutral"  # Current reverser position
         self.reverser_positions = {
             "forward": 65535,   # Full forward
             "neutral": 32767,   # Center position
@@ -51,19 +52,24 @@ class InputMapper:
         # State tracking for reverser switch
         self.reverser_state = "neutral"  # Current state: forward, neutral, reverse
     
-    def load_mappings_from_csv(self) -> bool:
+    def load_mappings_from_csv(self, file_path: Optional[str] = None) -> bool:
         """
         Load input mappings from CSV file
+        
+        Args:
+            file_path: Optional path to the CSV file. If None, uses default mapping file
         
         Returns:
             True if loaded successfully, False otherwise
         """
-        if not os.path.exists(self.mapping_file):
-            logger.info(f"Mapping file {self.mapping_file} not found, starting with empty mappings")
+        mapping_file = file_path if file_path else self.mapping_file
+        
+        if not os.path.exists(mapping_file):
+            logger.info(f"Mapping file {mapping_file} not found, starting with empty mappings")
             return False
         
         try:
-            with open(self.mapping_file, 'r', newline='', encoding='utf-8') as file:
+            with open(mapping_file, 'r', newline='', encoding='utf-8') as file:
                 reader = csv.DictReader(file)
                 for row in reader:
                     function_name = row.get('Function')
@@ -71,6 +77,12 @@ class InputMapper:
                     input_type = row.get('Type')
                     input_index = row.get('Index')
                     reverse_axis = row.get('Reverse', 'False')
+                    
+                    # Handle special reverser switch mode row
+                    if function_name == '__REVERSER_SWITCH_MODE__':
+                        self.reverser_switch_mode = str(reverse_axis).lower() == 'true'
+                        logger.debug(f"Loaded reverser switch mode: {self.reverser_switch_mode}")
+                        continue
                     
                     if all([function_name is not None, device_id is not None, input_type is not None, input_index is not None]):
                         try:
@@ -90,26 +102,32 @@ class InputMapper:
                         except (ValueError, TypeError) as e:
                             logger.error(f"Invalid mapping data for {function_name}: {e}")
                             
-            logger.info(f"Loaded {len(self.function_input_map)} mappings from {self.mapping_file}")
+            logger.info(f"Loaded {len(self.function_input_map)} mappings from {mapping_file}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load mappings from {self.mapping_file}: {e}")
+            logger.error(f"Failed to load mappings from {mapping_file}: {e}")
             return False
     
-    def save_mappings(self) -> bool:
+    def save_mappings(self, file_path: Optional[str] = None) -> bool:
         """
         Save input mappings to CSV file
+        
+        Args:
+            file_path: Optional path to the CSV file. If None, uses default mapping file
         
         Returns:
             True if saved successfully, False otherwise
         """
+        mapping_file = file_path if file_path else self.mapping_file
+        
         try:
-            with open(self.mapping_file, 'w', newline='', encoding='utf-8') as file:
+            with open(mapping_file, 'w', newline='', encoding='utf-8') as file:
                 fieldnames = ['Function', 'Device', 'Type', 'Index', 'Reverse']
                 writer = csv.DictWriter(file, fieldnames=fieldnames)
                 writer.writeheader()
                 
+                # Save regular mappings
                 for function_name, (device_id, input_type, input_index) in self.function_input_map.items():
                     writer.writerow({
                         'Function': function_name,
@@ -118,12 +136,21 @@ class InputMapper:
                         'Index': input_index,
                         'Reverse': self.reverse_axis_settings.get(function_name, False)
                     })
+                
+                # Save reverser switch mode as a special row
+                writer.writerow({
+                    'Function': '__REVERSER_SWITCH_MODE__',
+                    'Device': '',
+                    'Type': '',
+                    'Index': '',
+                    'Reverse': self.reverser_switch_mode
+                })
                     
-            logger.info(f"Saved {len(self.function_input_map)} mappings to {self.mapping_file}")
+            logger.info(f"Saved {len(self.function_input_map)} mappings to {mapping_file}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to save mappings to {self.mapping_file}: {e}")
+            logger.error(f"Failed to save mappings to {mapping_file}: {e}")
             return False
     
     def add_mapping(self, function_name: str, device_id: int, input_type: str, input_index: int) -> bool:

@@ -179,7 +179,42 @@ class InputManager:
             }
         
         try:
-            while time.time() - start_time < timeout:
+            # Store baseline states after a brief settling period
+            baseline_states = {}
+            movement_detected = {}
+            
+            # Initialize movement tracking
+            for device_id in self.enabled_devices:
+                if device_id not in self.devices:
+                    continue
+                device = self.devices[device_id]
+                if not device.enabled:
+                    continue
+                
+                movement_detected[device_id] = {}
+                for i in range(device.get_axis_count()):
+                    movement_detected[device_id][f'axis_{i}'] = False
+            
+            # Brief delay to let user prepare
+            time.sleep(0.3)
+            
+            # Establish baseline after delay
+            for device_id in self.enabled_devices:
+                if device_id not in self.devices:
+                    continue
+                device = self.devices[device_id]
+                if not device.enabled:
+                    continue
+                
+                pygame.event.pump()
+                baseline_states[device_id] = {
+                    'buttons': [device.joystick.get_button(i) for i in range(device.get_button_count())],
+                    'axes': [device.joystick.get_axis(i) for i in range(device.get_axis_count())],
+                    'hats': [device.joystick.get_hat(i) for i in range(device.get_hat_count())]
+                }
+            
+            detection_start = time.time()
+            while time.time() - detection_start < (timeout - 0.3):  # Account for initial delay
                 pygame.event.pump()
                 
                 for device_id in self.enabled_devices:
@@ -189,27 +224,47 @@ class InputManager:
                     if not device.enabled:
                         continue
                     
-                    # Check buttons
+                    # Check buttons (immediate response)
                     for i in range(device.get_button_count()):
                         current = device.joystick.get_button(i)
-                        if current and not initial_states[device_id]['buttons'][i]:
+                        baseline = baseline_states[device_id]['buttons'][i]
+                        if current and not baseline:
                             return (device_id, 'Button', i)
                     
-                    # Check axes
+                    # Check axes with movement confirmation
                     for i in range(device.get_axis_count()):
                         current = device.joystick.get_axis(i)
-                        initial = initial_states[device_id]['axes'][i]
-                        if abs(current - initial) > DEADZONE:
-                            return (device_id, 'Axis', i)
+                        baseline = baseline_states[device_id]['axes'][i]
+                        movement_key = f'axis_{i}'
+                        
+                        # Detect significant movement
+                        movement = abs(current - baseline)
+                        if movement > DEADZONE:
+                            if not movement_detected[device_id][movement_key]:
+                                # First time detecting movement on this axis
+                                movement_detected[device_id][movement_key] = True
+                                # Wait a bit to confirm sustained movement
+                                time.sleep(0.15)
+                                pygame.event.pump()
+                                confirmed = device.joystick.get_axis(i)
+                                # Check if movement is still significant
+                                if abs(confirmed - baseline) > DEADZONE * 0.7:  # Slightly lower threshold for confirmation
+                                    return (device_id, 'Axis', i)
+                                else:
+                                    # False alarm, reset detection for this axis
+                                    movement_detected[device_id][movement_key] = False
+                        else:
+                            # No significant movement, reset detection
+                            movement_detected[device_id][movement_key] = False
                     
-                    # Check hats
+                    # Check hats (immediate response)
                     for i in range(device.get_hat_count()):
                         current = device.joystick.get_hat(i)
-                        initial = initial_states[device_id]['hats'][i]
-                        if current != initial and current != (0, 0):
+                        baseline = baseline_states[device_id]['hats'][i]
+                        if current != baseline and current != (0, 0):
                             return (device_id, 'Hat', i)
                 
-                time.sleep(0.01)  # Small delay to prevent excessive CPU usage
+                time.sleep(0.02)  # Small delay to prevent excessive CPU usage
                 
         except Exception as e:
             logger.error(f"Error during input detection: {e}")
