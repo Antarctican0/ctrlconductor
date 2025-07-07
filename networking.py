@@ -63,55 +63,31 @@ class UDPClient:
     
     def send_command(self, function_id: int, value: int) -> bool:
         """
-        Send a command to Run8 simulator using the official packet structure
-        
-        Packet structure (6 bytes):
-        - Header Byte: 96 (no audio) or 224 (with audio) - bit 7 is audio flag
-        - Message Type: 2-byte ushort (little-endian) 
-        - Value: 2-byte ushort (little-endian) - CHANGED: Was 1 byte, now 2 bytes for ushort
-        - CRC: 1 byte (checksum)
+        Send a command to Run8 via UDP
         
         Args:
-            function_id: Run8 function ID (message type)
-            value: Command value (0-65535, but typically 0-255 for most functions)
-            
+            function_id: Run8 function ID
+            value: Value to send (0-255 or 0-65535 for special functions)
+        
         Returns:
             True if sent successfully, False otherwise
         """
-        if not self.connected or not self.sock:
-            logger.warning("UDP client not connected")
+        if not self.sock:
+            logger.warning("UDP socket not connected")
             return False
         
         try:
-            # Determine if this function should have audio
-            audio_functions = {1, 2, 8, 15}  # Alerter, Bell, Horn, Sander
-            with_audio = function_id in audio_functions
+            # Ensure value is within valid range
+            value = max(0, min(65535, value))
             
-            # Header byte: 96 (0x60) for no audio, 224 (0xE0) for with audio
-            header = 224 if with_audio else 96
+            # Create 6-byte packet: 4 bytes for function ID, 2 bytes for value
+            packet = struct.pack("<IH", function_id, value)
             
-            # Message type as 2-byte ushort (little-endian)
-            msg_type_low = function_id & 0xFF
-            msg_type_high = (function_id >> 8) & 0xFF
-            
-            # Value as 2-byte ushort (little-endian)
-            value = max(0, min(65535, value))  # Ensure value is in ushort range
-            value_low = value & 0xFF
-            value_high = (value >> 8) & 0xFF
-            
-            # Calculate simple checksum (sum of all bytes mod 256)
-            crc = (header + msg_type_high + msg_type_low + value_low + value_high) & 0xFF
-            
-            # Pack the 6-byte packet
-            # Order: header, msg_type_high, msg_type_low, value_low, value_high, crc
-            data = struct.pack('<BBBBBB', header, msg_type_high, msg_type_low, value_low, value_high, crc)
-            
-            self.sock.sendto(data, (self.ip, self.port))
-            logger.debug(f"Sent Run8 command: function={function_id}, value={value}, audio={with_audio}, data={data.hex()}")
+            self.sock.sendto(packet, (self.ip, self.port))
+            logger.debug(f"Sent Run8 command: function={function_id}, value={value}, data={packet.hex()}")
             return True
-            
         except Exception as e:
-            logger.error(f"Failed to send UDP command: {e}")
+            logger.error(f"Error sending UDP command: {e}")
             return False
     
     def update_connection(self, ip: str, port: int) -> bool:

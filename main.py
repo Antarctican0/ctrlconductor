@@ -230,7 +230,7 @@ class Run8ControlConductor:
                     input_state[(device_id, input_type, input_index)] = value
                 # Update reverser state from 3-way inputs
                 changed = self.input_mapper.update_reverser_3way_state_from_inputs(input_state)
-                if changed:
+                if changed or self.state_tracker.get_state('last_reverser_send_time', 0) < time.time() - 0.5:
                     # Get the Run8 function ID for the reverser
                     function_id = self.input_mapper.function_dict.get("Reverser Lever")
                     if function_id:
@@ -243,7 +243,8 @@ class Run8ControlConductor:
                         })
                         value = reverser_positions.get(state, 127)
                         self.pending_commands[function_id] = value
-                        logger.info(f"Queued 3-way reverser command: Reverser Lever ({function_id}) = {value} (state: {state})")
+                        self.state_tracker.set_state('last_reverser_send_time', time.time())
+                        logger.info(f"Queued 3-way reverser command: state={state}, value={value}")
 
             # --- Normal input processing ---
             for device_id, input_type, input_index, value in inputs:
@@ -253,9 +254,17 @@ class Run8ControlConductor:
                         input_type == mapped_type and 
                         input_index == mapped_index):
 
-                        # Special handling for reverser in switch mode (skip normal processing for 3-way mode)
+                        # Special handling for reverser in switch mode (skip normal processing)
                         if function_name == "Reverser Lever" and self.reverser_switch_mode:
-                            continue  # Already handled above
+                            continue
+
+                        # Special handling for brake controls
+                        if function_name in ["Train_Brake", "Independent_Brake", "Dynamic_Brake"] and input_type == "Axis":
+                            function_id = self.input_mapper.function_dict.get(function_name)
+                            if function_id:
+                                processed_value = self.input_mapper.process_brake_input(function_name, value)
+                                self.pending_commands[function_id] = processed_value
+                                continue
 
                         # Normal input processing for all other functions
                         changed, processed_value = self.input_mapper.process_input_value(
@@ -269,16 +278,11 @@ class Run8ControlConductor:
                             if function_id:
                                 # Queue the command for sending
                                 self.pending_commands[function_id] = processed_value
-                                if function_name == "Reverser Lever":
-                                    logger.info(f"Queued lever reverser command: {function_name} ({function_id}) = {processed_value}")
-                                else:
-                                    logger.debug(f"Queued command: {function_name} ({function_id}) = {processed_value}")
 
                         # Update reverse axis settings from UI
                         if input_type == 'Axis' and function_name != "Reverser Lever" or (function_name == "Reverser Lever" and not self.reverser_switch_mode):
                             reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                             self.input_mapper.set_axis_reverse(function_name, reverse_setting)
-
         except Exception as e:
             logger.error(f"Error processing inputs: {e}")
     

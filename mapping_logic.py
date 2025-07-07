@@ -651,3 +651,54 @@ class InputMapper:
         
         logger.info(f"Reverser lever: axis={value:.2f}, state={state_name}, value={reverser_val}")
         return reverser_val
+    
+    def process_brake_input(self, function_name: str, value: float) -> int:
+        """
+        Process brake input for better control
+        Args:
+            function_name: Name of brake function
+            value: Axis value from -1.0 to 1.0
+        Returns:
+            Processed value for simulator
+        """
+        # Identify which brake control this is
+        if function_name == "Train_Brake":
+            # Train brake is typically 0 (release) to 255 (emergency)
+            # Add deadzone at the release end
+            if value < -0.95:
+                brake_val = 0  # Full release
+            else:
+                # Scale from -0.95 to 1.0 range to 0-255
+                normalized = (value + 0.95) / 1.95
+                brake_val = int(normalized * 255)
+                brake_val = max(0, min(255, brake_val))
+                
+        elif function_name == "Independent_Brake":
+            # Independent brake is typically 0 (release) to 255 (full)
+            # Add deadzone at both ends for better control
+            if value < -0.95:
+                brake_val = 0  # Full release
+            elif value > 0.95:
+                brake_val = 255  # Full application
+            else:
+                # Scale from -0.95 to 0.95 range to 0-255
+                normalized = (value + 0.95) / 1.9
+                brake_val = int(normalized * 255)
+                brake_val = max(0, min(255, brake_val))
+                
+        elif function_name == "Dynamic_Brake":
+            # Dynamic brake is typically 0 (off) to 255 (full)
+            # Only active in positive range, with deadzone at start
+            if value < -0.2:
+                brake_val = 0  # Off
+            else:
+                # Scale from -0.2 to 1.0 range to 0-255
+                normalized = (value + 0.2) / 1.2
+                brake_val = int(normalized * 255)
+                brake_val = max(0, min(255, brake_val))
+        else:
+            # Default handling
+            brake_val = int((value + 1.0) * 127.5)
+            
+        logger.info(f"Brake control: {function_name}, input={value:.2f}, value={brake_val}")
+        return brake_val
