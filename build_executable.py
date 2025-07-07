@@ -164,7 +164,7 @@ def main():
 - Run8 Train Simulator
 - USB joystick/gamepad
 
-For support, visit: https://github.com/your-username/ctrlconductor
+For support, visit: https://github.com/Antarctican0/ctrlconductor
 """
     
     with open(release_dir / "USER_GUIDE.txt", "w") as f:
