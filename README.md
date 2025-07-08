@@ -1,5 +1,5 @@
 ## Easy Controls for Run8 Train Simulator!
-This program is meant to make using custom controls easier with the train simulator. It accomplishes this by taking mapped inputs of your devices and send them to the simulator in the UDP packet format the simulator expects.
+This program is meant to make using custom controls easier with Run8. It accomplishes this by taking mapped inputs of your devices and sending them in a format the simulator expects.
 
 ![image](https://github.com/user-attachments/assets/b4eab56a-b74f-4c32-bcc9-1d7a4d6a848b)
 
@@ -17,6 +17,12 @@ This program is meant to make using custom controls easier with the train simula
 4. Run the application: `python main.py`
 
 ## Operations Manual
+**Make sure that Run8 is set to use Custom USB Device and that the ports match!**
+
+![image](https://github.com/user-attachments/assets/1bcd3f34-1a71-43f4-93f7-d7a109214ae2)
+
+![image](https://github.com/user-attachments/assets/053f7f55-bde4-4bfd-82cd-0a353fa5b024)
+
 
 ### Throttle and Dynamic Braking
 The Throttle and Dynamic Brakes can operate in one of three ways, based on your preference in control type. 
