@@ -40,7 +40,7 @@ Lastly, They can share the same axis, with a toggle switch being used to flip be
 
 ### Reverser
 The Reverser can operate in two styles; controlled either by an axis input or controlled with buttons. When one of the button modes is selected, new fields will appear to assign either 2 or 3 inputs based off how your controls are configured in real life. 
-- 2 Way Switch is recommended for toggles and switches that have 3 positions, but only send two possible inputs
+- 2 Way Switch is recommended for two position rocker switches, as well as 3 position toggles that do not have a button mapped for the middle / neutral position.
 - 3 Way Switch is recommended when you are utilizing a button box
 
 ![image](https://github.com/user-attachments/assets/7ba0500b-13e5-4004-878d-3853e480d784)
