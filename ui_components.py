@@ -67,6 +67,14 @@ class UIManager:
         self.on_clear_mapping_callback: Optional[Callable] = None
         self.on_cancel_mapping_callback: Optional[Callable] = None
         self.reverser_mode_callback = None
+
+        # Throttle mode state: 'separate', 'toggle', 'split'
+        self.throttle_mode_var = tk.StringVar(value="separate")
+        self.throttle_mode_callback = None
+        self.throttle_mode_frame = None
+        self.throttle_mode_radio_separate = None
+        self.throttle_mode_radio_toggle = None
+        self.throttle_mode_radio_split = None
         
         # Setup UI
         self._setup_ui_theme()
@@ -109,11 +117,14 @@ class UIManager:
         self._create_connection_section()
         self._create_device_section()
         # Ensure reverser mode selector is created before layout so attribute exists
-        self.reverser_mode_var = tk.BooleanVar(value=False)
+        self.reverser_mode_var = tk.StringVar(value="axis")  # 'axis', '2way', '3way'
         self.reverser_mode_callback = None
         self.reverser_mode_frame = None
-        self.reverser_mode_checkbox = None
-        self._create_reverser_mode_selector()  # Move reverser mode selector here
+        self.reverser_mode_radio_axis = None
+        self.reverser_mode_radio_2way = None
+        self.reverser_mode_radio_3way = None
+        self._create_reverser_mode_selector()
+        self._create_throttle_mode_selector()
         self._create_mapping_section()
         self._create_control_section()
 
@@ -122,8 +133,62 @@ class UIManager:
         self.device_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=2)
         if self.reverser_mode_frame is not None:
             self.reverser_mode_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=2)
-        self.mapping_frame.grid(row=3, column=0, sticky="nsew", padx=10, pady=2)
-        self.control_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(2, 8))
+        if self.throttle_mode_frame is not None:
+            self.throttle_mode_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=2)
+        self.mapping_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=2)
+        self.control_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=(2, 8))
+    def _create_throttle_mode_selector(self):
+        """Create the throttle mode selector (Separate, Toggle, Split)"""
+        self.throttle_mode_frame = tk.Frame(self.master, bg=self.theme.DARK_ACCENT)
+        label = tk.Label(self.throttle_mode_frame, text="Throttle Mode:", bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, font=("Segoe UI", 10, "bold"))
+        label.pack(side="left", padx=(5, 10))
+        # Separate (default)
+        self.throttle_mode_radio_separate = tk.Radiobutton(
+            self.throttle_mode_frame, text="Separate", variable=self.throttle_mode_var, value="separate",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_throttle_mode_change
+        )
+        self.throttle_mode_radio_separate.pack(side="left", padx=2)
+        # Toggle
+        self.throttle_mode_radio_toggle = tk.Radiobutton(
+            self.throttle_mode_frame, text="Toggle", variable=self.throttle_mode_var, value="toggle",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_throttle_mode_change
+        )
+        self.throttle_mode_radio_toggle.pack(side="left", padx=2)
+        # Split
+        self.throttle_mode_radio_split = tk.Radiobutton(
+            self.throttle_mode_frame, text="Split", variable=self.throttle_mode_var, value="split",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_throttle_mode_change
+        )
+        self.throttle_mode_radio_split.pack(side="left", padx=2)
+
+    def _on_throttle_mode_change(self):
+        """Callback for when the throttle mode is changed by the user"""
+        mode = self.throttle_mode_var.get()
+        if self.throttle_mode_callback:
+            self.throttle_mode_callback(mode)
+        if hasattr(self, '_last_functions_list'):
+            self.populate_mapping_interface(self._last_functions_list)
+
+    def get_throttle_mode(self) -> str:
+        """Return the current throttle mode: 'separate', 'toggle', or 'split'"""
+        return self.throttle_mode_var.get()
+
+    def set_throttle_mode(self, mode: str):
+        """Set the throttle mode in the UI ('separate', 'toggle', or 'split')"""
+        self.throttle_mode_var.set(mode)
+
+    def set_throttle_mode_callback(self, callback: Callable) -> None:
+        """Set the callback function for throttle mode changes"""
+        self.throttle_mode_callback = callback
     
     def _create_connection_section(self) -> None:
         """Create the connection configuration section"""
@@ -344,54 +409,59 @@ class UIManager:
         self.clear_mappings_button.pack(side="left", padx=2)
     
     def _create_reverser_mode_selector(self):
-        """Create the reverser mode selection UI elements"""
+        """Create the reverser mode selector (axis, 2-way, 3-way)"""
         self.reverser_mode_frame = tk.Frame(self.master, bg=self.theme.DARK_ACCENT)
-        # Do not pack/grid here; handled in main layout
-        label = tk.Label(
-            self.reverser_mode_frame,
-            text="Reverser Control Mode:",
-            bg=self.theme.DARK_ACCENT,
-            fg=self.theme.DARK_FG,
-            font=("Segoe UI", 10, "bold")
+        label = tk.Label(self.reverser_mode_frame, text="Reverser Mode:", bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, font=("Segoe UI", 10, "bold"))
+        label.pack(side="left", padx=(5, 10))
+        # Axis mode (default)
+        self.reverser_mode_radio_axis = tk.Radiobutton(
+            self.reverser_mode_frame, text="Axis", variable=self.reverser_mode_var, value="axis",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_reverser_mode_change
         )
-        label.pack(side=tk.LEFT)
-        self.reverser_mode_checkbox = tk.Checkbutton(
-            self.reverser_mode_frame,
-            text="Use 3-position switch (instead of axis/lever)",
-            variable=self.reverser_mode_var,
-            command=self._on_reverser_mode_change,
-            bg=self.theme.DARK_BUTTON_BG,
-            fg=self.theme.DARK_BUTTON_FG,
-            activebackground=self.theme.DARK_HIGHLIGHT,
-            activeforeground=self.theme.DARK_FG,
-            selectcolor=self.theme.DARK_ACCENT,
-            relief=tk.RAISED,
-            bd=2,
-            font=("Segoe UI", 10, "bold")
+        self.reverser_mode_radio_axis.pack(side="left", padx=2)
+        # 2-way switch
+        self.reverser_mode_radio_2way = tk.Radiobutton(
+            self.reverser_mode_frame, text="2-way Switch", variable=self.reverser_mode_var, value="2way",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_reverser_mode_change
         )
-        self.reverser_mode_checkbox.pack(side=tk.LEFT, padx=10)
+        self.reverser_mode_radio_2way.pack(side="left", padx=2)
+        # 3-way switch
+        self.reverser_mode_radio_3way = tk.Radiobutton(
+            self.reverser_mode_frame, text="3-way Switch", variable=self.reverser_mode_var, value="3way",
+            bg=self.theme.DARK_ACCENT, fg=self.theme.DARK_FG, selectcolor=self.theme.DARK_HIGHLIGHT,
+            activebackground=self.theme.DARK_HIGHLIGHT, activeforeground=self.theme.DARK_FG,
+            font=("Segoe UI", 10),
+            command=self._on_reverser_mode_change
+        )
+        self.reverser_mode_radio_3way.pack(side="left", padx=2)
     
     def _on_reverser_mode_change(self):
-        """Handle reverser mode toggle change"""
-        switch_mode = self.reverser_mode_var.get()
-
+        """Callback for when the reverser mode is changed by the user"""
+        mode = self.reverser_mode_var.get()
         # Show/hide the reverse checkbox for Reverser Lever based on mode
         if "Reverser Lever" in self.reverse_axis_checkboxes:
             reverse_checkbox = self.reverse_axis_checkboxes["Reverser Lever"]
-            if switch_mode:
-                # Hide reverse checkbox in switch mode
+            if mode in ("2way", "3way"):
                 reverse_checkbox.pack_forget()
             else:
-                # Show reverse checkbox in axis mode
                 reverse_checkbox.pack(side="left", padx=10)
-
-        # Call the main application callback
         if self.reverser_mode_callback:
-            self.reverser_mode_callback(switch_mode)
-
-        # Refresh the mapping interface to show/hide 3-way rows
+            self.reverser_mode_callback(mode)
         if hasattr(self, '_last_functions_list'):
             self.populate_mapping_interface(self._last_functions_list)
+    def get_reverser_mode(self) -> str:
+        """Return the current reverser mode: 'axis', '2way', or '3way'"""
+        return self.reverser_mode_var.get()
+
+    def set_reverser_mode(self, mode: str):
+        """Set the reverser mode in the UI ('axis', '2way', or '3way')"""
+        self.reverser_mode_var.set(mode)
     
     def populate_device_list(self, devices: List[Any]) -> None:
         """
@@ -454,12 +524,31 @@ class UIManager:
             for widget in frame.winfo_children():
                 widget.destroy()
 
-        # Create controls for each function, organized by category order
+        # Determine throttle mode and hide/show throttle/dynamic brake fields accordingly
+        throttle_mode = self.get_throttle_mode()
+        # If in toggle or split mode, show only combined lever (and toggle if needed)
+        # --- UI refinement: Share axis assignment for throttle/combined/toggle ---
+        throttle_axis_rendered = False
         for category, category_functions in self.function_categories.items():
             if category not in self.category_frames:
                 continue
             frame = self.category_frames[category]
             for function_name in category_functions:
+                # Hide Dyn Brake Lever mapping if in combined mode (it will be controlled by throttle lever)
+                if throttle_mode in ("toggle", "split"):
+                    if function_name == "Dyn Brake Lever":
+                        continue
+                # Render a single axis row for all throttle/combined modes
+                if function_name == "Throttle Lever":
+                    if not throttle_axis_rendered:
+                        self._create_function_controls(frame, function_name)
+                        throttle_axis_rendered = True
+                    continue
+                # Hide Combined Throttle/Dyn row (logic is handled by Throttle Lever row)
+                if function_name == "Combined Throttle/Dyn":
+                    continue
+                if function_name == "Throttle/Dyn Toggle":
+                    continue
                 if function_name in functions:
                     self._create_function_controls(frame, function_name)
 
@@ -565,18 +654,25 @@ class UIManager:
             )
             clear_button.pack(side="left", padx=2)
 
-            # If 3-way mode, disable main row's controls and add a single wide sub-frame with three rows
-            if self.reverser_mode_var.get():
+            # Show/hide reverser switch mapping rows based on mode
+            mode = self.reverser_mode_var.get()
+            if mode in ("2way", "3way"):
                 map_button.config(state=tk.DISABLED)
                 clear_button.config(state=tk.DISABLED)
                 if reverse_checkbox:
                     reverse_checkbox.config(state=tk.DISABLED)
 
-                # Create a single sub-frame for all three modes, each on its own line
+                # Create a single sub-frame for all switch mappings
                 sub_frame = tk.Frame(parent_frame, bg="#23272b", highlightbackground="#444444", highlightthickness=1, bd=1, relief=tk.GROOVE)
                 sub_frame.pack(fill="x", pady=(0, 8), padx=(0, 2))
 
-                for idx, (pos, label) in enumerate(zip(["forward", "neutral", "reverse"], ["Forward", "Neutral", "Reverse"])):
+                # Determine which positions to show
+                if mode == "2way":
+                    positions = [("forward", "Forward"), ("reverse", "Reverse")]
+                else:
+                    positions = [("forward", "Forward"), ("neutral", "Neutral"), ("reverse", "Reverse")]
+
+                for idx, (pos, label) in enumerate(positions):
                     row = tk.Frame(sub_frame, bg="#23272b")
                     row.pack(fill="x", pady=2)
 
@@ -639,6 +735,158 @@ class UIManager:
                     )
                     clear_button.pack(side="left", padx=2)
                 # End of single sub-frame
+            return
+
+        # Handle Throttle Lever with potential toggle sub-menu
+        if function_name == "Throttle Lever":
+            # Main throttle lever row
+            func_frame = tk.Frame(parent_frame, bg=self.theme.DARK_ACCENT)
+            func_frame.pack(fill="x", pady=2)
+
+            name_label = tk.Label(
+                func_frame,
+                text="Throttle Lever",
+                width=25,
+                anchor=tk.W,
+                bg=self.theme.DARK_ACCENT,
+                fg=self.theme.DARK_FG
+            )
+            name_label.pack(side="left", padx=5)
+
+            status_label = tk.Entry(
+                func_frame,
+                width=22,
+                relief=tk.GROOVE,
+                borderwidth=2,
+                bg=self.theme.DARK_ENTRY_BG,
+                fg=self.theme.DARK_ENTRY_FG,
+                state="readonly",
+                readonlybackground=self.theme.DARK_ENTRY_BG,
+                highlightthickness=1,
+                highlightbackground="#444444"
+            )
+            status_label.insert(0, "Not mapped")
+            status_label.pack(side="left", padx=5)
+            self.mapping_labels[function_name] = status_label
+
+            # Add reverse checkbox for throttle lever
+            reverse_var = tk.BooleanVar()
+            reverse_checkbox = tk.Checkbutton(
+                func_frame,
+                text="Reverse",
+                variable=reverse_var,
+                bg="#444444",
+                fg=self.theme.DARK_FG,
+                activebackground="#666666",
+                activeforeground=self.theme.DARK_FG,
+                selectcolor=self.theme.DARK_ACCENT,
+                relief=tk.RAISED,
+                bd=2
+            )
+            reverse_checkbox.pack(side="left", padx=10)
+            self.reverse_axis_vars[function_name] = reverse_var
+            self.reverse_axis_checkboxes[function_name] = reverse_checkbox
+
+            buttons_frame = tk.Frame(func_frame, bg=self.theme.DARK_ACCENT)
+            buttons_frame.pack(side="right", padx=5)
+
+            map_button = tk.Button(
+                buttons_frame,
+                text="Map Input",
+                command=lambda fn=function_name: self._on_map_input(fn),
+                bg="#444444",
+                fg=self.theme.DARK_FG,
+                activebackground="#666666",
+                activeforeground=self.theme.DARK_FG,
+                relief=tk.RAISED,
+                bd=2
+            )
+            map_button.pack(side="left", padx=2)
+            self.mapping_buttons[function_name] = map_button
+
+            clear_button = tk.Button(
+                buttons_frame,
+                text="Clear",
+                command=lambda fn=function_name: self._on_clear_mapping(fn),
+                bg="#444444",
+                fg=self.theme.DARK_FG,
+                activebackground="#666666",
+                activeforeground=self.theme.DARK_FG,
+                relief=tk.RAISED,
+                bd=2
+            )
+            clear_button.pack(side="left", padx=2)
+
+            # Show toggle button sub-menu if in toggle mode
+            throttle_mode = self.get_throttle_mode()
+            if throttle_mode == "toggle":
+                # Create sub-frame for toggle button mapping
+                sub_frame = tk.Frame(parent_frame, bg="#23272b", highlightbackground="#444444", highlightthickness=1, bd=1, relief=tk.GROOVE)
+                sub_frame.pack(fill="x", pady=(0, 8), padx=(0, 2))
+
+                # Toggle button row
+                row = tk.Frame(sub_frame, bg="#23272b")
+                row.pack(fill="x", pady=2)
+
+                name_label = tk.Label(
+                    row,
+                    text="Toggle Switch",
+                    width=12,
+                    anchor=tk.W,
+                    bg="#23272b",
+                    fg=self.theme.DARK_FG,
+                    font=("Segoe UI", 10, "bold")
+                )
+                name_label.pack(side="left", padx=8)
+
+                status_label = tk.Entry(
+                    row,
+                    width=16,
+                    relief=tk.GROOVE,
+                    borderwidth=2,
+                    bg=self.theme.DARK_ENTRY_BG,
+                    fg=self.theme.DARK_ENTRY_FG,
+                    state="readonly",
+                    readonlybackground=self.theme.DARK_ENTRY_BG,
+                    highlightthickness=1,
+                    highlightbackground="#444444"
+                )
+                status_label.insert(0, "Not mapped")
+                status_label.pack(side="left", padx=5)
+                self.mapping_labels["Throttle/Dyn Toggle"] = status_label
+
+                buttons_frame = tk.Frame(row, bg="#23272b")
+                buttons_frame.pack(side="left", padx=5)
+
+                map_button = tk.Button(
+                    buttons_frame,
+                    text="Map Input",
+                    command=lambda: self._on_map_input("Throttle/Dyn Toggle"),
+                    bg="#444444",
+                    fg=self.theme.DARK_FG,
+                    activebackground="#666666",
+                    activeforeground=self.theme.DARK_FG,
+                    relief=tk.RAISED,
+                    bd=2,
+                    width=10
+                )
+                map_button.pack(side="left", padx=2)
+                self.mapping_buttons["Throttle/Dyn Toggle"] = map_button
+
+                clear_button = tk.Button(
+                    buttons_frame,
+                    text="Clear",
+                    command=lambda: self._on_clear_mapping("Throttle/Dyn Toggle"),
+                    bg="#444444",
+                    fg=self.theme.DARK_FG,
+                    activebackground="#666666",
+                    activeforeground=self.theme.DARK_FG,
+                    relief=tk.RAISED,
+                    bd=2,
+                    width=8
+                )
+                clear_button.pack(side="left", padx=2)
+
             return
 
         # Default: lever/axis or button mapping
@@ -879,19 +1127,7 @@ class UIManager:
         """Set the callback function for reverser mode changes"""
         self.reverser_mode_callback = callback
     
-    def set_reverser_mode(self, switch_mode: bool):
-        """Update the UI to reflect the current reverser mode"""
-        self.reverser_mode_var.set(switch_mode)
-        
-        # Update the reverse checkbox visibility for Reverser Lever
-        if "Reverser Lever" in self.reverse_axis_checkboxes:
-            reverse_checkbox = self.reverse_axis_checkboxes["Reverser Lever"]
-            if switch_mode:
-                # Hide reverse checkbox in switch mode
-                reverse_checkbox.pack_forget()
-            else:
-                # Show reverse checkbox in axis mode
-                reverse_checkbox.pack(side="left", padx=10)
+    # (Obsolete: replaced by new set_reverser_mode(mode: str) for radio buttons)
     
     # Internal callback methods
     def _on_start(self) -> None:

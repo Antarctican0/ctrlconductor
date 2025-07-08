@@ -20,9 +20,119 @@ DEADZONE = 0.7
 
 
 class InputMapper:
+    # --- Combined Throttle/Dynamic Brake support ---
+    def set_throttle_mode(self, mode: str):
+        """Set the throttle mode: 'separate', 'toggle', or 'split'"""
+        self.throttle_mode = mode
+        if mode == 'toggle':
+            self.combined_toggle_state = False  # False=Throttle, True=Dynamic
+        else:
+            self.combined_toggle_state = None
+
+    def get_throttle_mode(self) -> str:
+        return getattr(self, 'throttle_mode', 'separate')
+
+    def set_combined_toggle_state(self, state: bool):
+        self.combined_toggle_state = state
+
+    def process_combined_lever_input(self, value: float, toggle_state: bool = False) -> list:
+        """
+        Process a single lever for combined throttle/dynamic brake.
+        Args:
+            value: Axis value (-1.0 to 1.0 or 0.0 to 1.0 depending on mapping)
+            toggle_state: If in toggle mode, True=Dynamic, False=Throttle (ignored in split mode)
+        Returns:
+            List of (function_id, value) tuples to send
+        """
+        results = []
+        mode = self.get_throttle_mode()
+        throttle_id = self.function_dict.get('Throttle Lever')
+        dyn_id = self.function_dict.get('Dyn Brake Lever')
+        
+        # Ensure we have valid function IDs
+        if throttle_id is None or dyn_id is None:
+            logger.warning(f"Missing function IDs: Throttle={throttle_id}, Dyn={dyn_id}")
+            return results
+        
+        # Apply deadzone to prevent jitter around center
+        deadzone = 0.05
+        if abs(value) < deadzone:
+            value = 0.0
+        
+        logger.debug(f"Combined lever processing: mode={mode}, value={value:.3f}, toggle_state={toggle_state}")
+        
+        if mode == 'split':
+            # Center = idle, positive = throttle, negative = dynamic brake
+            if value > deadzone:
+                # Throttle - Use notch system (0-8 notches) like normal throttle processing
+                throttle_notch = int(round(value * 8))
+                throttle_notch = max(0, min(8, throttle_notch))
+                results.append((throttle_id, throttle_notch))
+                results.append((dyn_id, 0))
+                logger.debug(f"Split mode throttle: input={value:.3f} -> notch={throttle_notch}")
+            elif value < -deadzone:
+                # Dynamic brake - Use proper brake mapping (0-255)
+                # Map negative values (-1 to 0) to brake range (0 to 255)
+                dyn_val = int(abs(value) * 255)
+                dyn_val = max(0, min(255, dyn_val))
+                results.append((throttle_id, 0))
+                results.append((dyn_id, dyn_val))
+                logger.debug(f"Split mode dynamic: input={value:.3f} -> output={dyn_val}")
+            else:
+                # Idle position
+                results.append((throttle_id, 0))
+                results.append((dyn_id, 0))
+                logger.debug("Split mode idle")
+                
+        elif mode == 'toggle':
+            # Use toggle_state to select which function the lever controls
+            # The lever should work in its full range for the selected function
+            
+            if toggle_state:
+                # Dynamic Brake mode - use full axis range like other train brakes
+                # Map full axis range (-1 to 1) to brake range (0 to 255)
+                # Same formula as train brake: -1.0 = no braking (0), +1.0 = full braking (255)
+                dyn_val = int(((value + 1.0) / 2.0) * 255)
+                dyn_val = max(0, min(255, dyn_val))
+                results.append((throttle_id, 0))
+                results.append((dyn_id, dyn_val))
+                logger.debug(f"Toggle mode dynamic: input={value:.3f} -> output={dyn_val} (full range)")
+            else:
+                # Throttle mode - use notch system like normal throttle
+                # Convert full axis range (-1 to 1) to throttle notches (0 to 8)
+                throttle_notch = int(round(((value + 1.0) / 2.0) * 8))
+                throttle_notch = max(0, min(8, throttle_notch))
+                results.append((throttle_id, throttle_notch))
+                results.append((dyn_id, 0))
+                logger.debug(f"Toggle mode throttle: input={value:.3f} -> notch={throttle_notch}")
+        else:
+            # Separate mode, do nothing here
+            pass
+            
+        return results
+    def get_reverser_command_value(self) -> int:
+        """
+        Get the current reverser value to send to the simulator (0=reverse, 127=neutral, 255=forward).
+        Returns:
+            int: Value for Run8 reverser lever (ushort 14)
+        """
+        if self.reverser_state == "forward":
+            return 255
+        elif self.reverser_state == "reverse":
+            return 0
+        else:
+            return 127
+
+    def get_reverser_command_packet(self) -> tuple:
+        """
+        Returns the (function_id, value) tuple for the current reverser state for UDP sending.
+        """
+        return (14, self.get_reverser_command_value())
     def update_reverser_3way_state_from_inputs(self, input_state: Dict[Tuple[int, str, int], Any]) -> bool:
         """
         Poll all mapped 3-way reverser inputs and update the reverser state if any mapped input is active.
+        Supports both 3-input and 2-input (NOR logic) switch configurations.
+        
         Args:
             input_state: Dict mapping (device_id, input_type, input_index) to current value (e.g., 1 for button pressed)
         Returns:
@@ -35,40 +145,109 @@ class InputMapper:
             return False
 
         prev_state = self.reverser_state
-        # Priority: forward > neutral > reverse (if multiple pressed, forward wins, etc.)
-        active_pos = None
-        for pos in ("forward", "neutral", "reverse"):
-            mapping = self.reverser_3way_mappings.get(pos)
-            if not mapping:
-                continue
-            device_id, input_type, input_index = mapping
-            value = input_state.get((device_id, input_type, input_index))
-            if input_type == "Button":
-                # Button is considered active if value == 1 (pressed)
-                if value == 1:
-                    active_pos = pos
-                    break  # Highest priority found
-            elif input_type == "Hat":
-                # For hats, value should match direction
-                if pos == "forward" and value == (0, 1):
-                    active_pos = pos
-                    break
-                elif pos == "neutral" and value == (0, 0):
-                    active_pos = pos
-                    break
-                elif pos == "reverse" and value == (0, -1):
-                    active_pos = pos
-                    break
-
-        # Always set the reverser state to the currently active position (or keep previous if none pressed)
-        if active_pos is not None:
-            changed = (self.reverser_state != active_pos)
-            self.reverser_state = active_pos
-            if changed:
-                logger.info(f"3-way reverser state changed to: {active_pos}")
-            return changed
-        # If no button/hat is pressed, do not change the state (latch last position)
-        return False
+        
+        # Check which positions have mappings
+        forward_mapping = self.reverser_3way_mappings.get("forward")
+        neutral_mapping = self.reverser_3way_mappings.get("neutral")
+        reverse_mapping = self.reverser_3way_mappings.get("reverse")
+        
+        # Determine if we're in 2-input mode (only forward and reverse mapped, or explicit setting)
+        mapped_positions = [pos for pos in ["forward", "neutral", "reverse"] if self.reverser_3way_mappings.get(pos)]
+        is_two_input_mode = (self.reverser_two_input_mode or 
+                            (len(mapped_positions) == 2 and "neutral" not in mapped_positions))
+        
+        if is_two_input_mode:
+            # 2-input mode: Only forward and reverse mapped
+            # Only update if one of the mapped reverser inputs is actually in the input_state
+            reverser_input_present = False
+            forward_active = False
+            reverse_active = False
+            
+            if forward_mapping:
+                device_id, input_type, input_index = forward_mapping
+                if (device_id, input_type, input_index) in input_state:
+                    reverser_input_present = True
+                    value = input_state.get((device_id, input_type, input_index))
+                    if input_type == "Button" and value == 1:
+                        forward_active = True
+                    elif input_type == "Hat" and value == (0, 1):
+                        forward_active = True
+            
+            if reverse_mapping:
+                device_id, input_type, input_index = reverse_mapping
+                if (device_id, input_type, input_index) in input_state:
+                    reverser_input_present = True
+                    value = input_state.get((device_id, input_type, input_index))
+                    if input_type == "Button" and value == 1:
+                        reverse_active = True
+                    elif input_type == "Hat" and value == (0, -1):
+                        reverse_active = True
+            
+            # Only update reverser state if a reverser input is actually present in this input cycle
+            if not reverser_input_present:
+                return False
+            
+            # Determine new state based on current button states
+            if forward_active and not reverse_active:
+                new_state = "forward"
+            elif reverse_active and not forward_active:
+                new_state = "reverse"
+            elif not forward_active and not reverse_active:
+                new_state = "neutral"
+            else:
+                # Both pressed: keep previous state (or prioritize forward)
+                new_state = prev_state
+            
+            if new_state != prev_state:
+                self.reverser_state = new_state
+                logger.info(f"2-input reverser state changed to: {new_state} (forward={forward_active}, reverse={reverse_active})")
+                return True
+            return False
+        else:
+            # 3-input logic: Priority: forward > neutral > reverse (if multiple pressed, forward wins, etc.)
+            # Only update if one of the mapped reverser inputs is actually in the input_state
+            reverser_input_present = False
+            active_pos = None
+            
+            for pos in ("forward", "neutral", "reverse"):
+                mapping = self.reverser_3way_mappings.get(pos)
+                if not mapping:
+                    continue
+                device_id, input_type, input_index = mapping
+                
+                # Check if this reverser input is present in the current input cycle
+                if (device_id, input_type, input_index) in input_state:
+                    reverser_input_present = True
+                    value = input_state.get((device_id, input_type, input_index))
+                    if input_type == "Button":
+                        # Button is considered active if value == 1 (pressed)
+                        if value == 1:
+                            active_pos = pos
+                            break  # Highest priority found
+                    elif input_type == "Hat":
+                        # For hats, value should match direction
+                        if pos == "forward" and value == (0, 1):
+                            active_pos = pos
+                            break
+                        elif pos == "neutral" and value == (0, 0):
+                            active_pos = pos
+                            break
+                        elif pos == "reverse" and value == (0, -1):
+                            active_pos = pos
+                            break
+            
+            # Only update reverser state if a reverser input is actually present in this input cycle
+            if not reverser_input_present:
+                return False
+            
+            # Set the reverser state to the currently active position (or keep previous if none pressed)
+            if active_pos is not None:
+                changed = (self.reverser_state != active_pos)
+                self.reverser_state = active_pos
+                if changed:
+                    logger.info(f"3-input reverser state changed to: {active_pos}")
+                return changed
+            return False
 
     def find_existing_mapping(self, device_id: int, input_type: str, input_index: int) -> Optional[str]:
         """
@@ -100,6 +279,7 @@ class InputMapper:
         
         # Reverser switch mode settings
         self.reverser_switch_mode = False
+        self.reverser_two_input_mode = False  # New: Toggle for 2-input vs 3-input mode
         self.reverser_state = "neutral"  # Current reverser position
         self.reverser_positions = {
             "forward": 255,     # Forward (uint16 max for Run8)
@@ -259,21 +439,31 @@ class InputMapper:
     
     def remove_mapping(self, function_name: str) -> bool:
         """
-        Remove an input mapping
-        
+        Remove an input mapping, including reverser 3-way mappings if relevant.
         Args:
-            function_name: Name of the Run8 function
-            
+            function_name: Name of the Run8 function or special reverser 3way mapping
         Returns:
             True if removed successfully, False otherwise
         """
+        removed = False
+        # Remove from standard function mappings
         if function_name in self.function_input_map:
             del self.function_input_map[function_name]
             if function_name in self.reverse_axis_settings:
                 del self.reverse_axis_settings[function_name]
             logger.info(f"Removed mapping for {function_name}")
-            return True
-        return False
+            removed = True
+        # Remove from reverser 3-way mappings if function_name matches
+        if function_name.startswith("Reverser 3way"):
+            # function_name is like 'Reverser 3way forward', 'Reverser 3way neutral', etc.
+            parts = function_name.split()
+            if len(parts) == 3:
+                pos = parts[2].lower()
+                if hasattr(self, 'reverser_3way_mappings') and pos in self.reverser_3way_mappings:
+                    del self.reverser_3way_mappings[pos]
+                    logger.info(f"Removed reverser 3-way mapping for {pos}")
+                    removed = True
+        return removed
     
     def get_mapping(self, function_name: str) -> Optional[Tuple[int, str, int]]:
         """
@@ -313,8 +503,8 @@ class InputMapper:
     def process_input_value(self, function_name: str, device_id: int, input_type: str, 
                            input_index: int, raw_value: Any, prev_states: Dict) -> Tuple[bool, int]:
         """
-        Process raw input value to Run8 command value
-        
+        Process raw input value to Run8 command value.
+        For the Reverser Lever (3-way switch mode), always return the correct value for function 14.
         Args:
             function_name: Name of the Run8 function
             device_id: Input device ID
@@ -322,13 +512,25 @@ class InputMapper:
             input_index: Index of the input
             raw_value: Raw input value
             prev_states: Previous state tracking dictionary
-            
         Returns:
             Tuple of (value_changed, processed_value)
         """
         mapping_key = (device_id, input_type, input_index)
         input_behavior = FunctionMapping.INPUT_TYPES.get(function_name, 'toggle')
-        
+
+        # Reverser input mode selection: axis OR 3-way switch, never both
+        if function_name == 'Reverser Lever':
+            if self.get_reverser_switch_mode():
+                # 3-way switch mode: always pass the current reverser value to the simulator
+                # regardless of whether an axis is mapped or not
+                return True, self.get_reverser_command_value()
+            else:
+                # Axis mode: only process axis, ignore buttons/hats
+                if input_type == 'Axis':
+                    return self._process_lever_input(function_name, input_type, raw_value, mapping_key, prev_states)
+                else:
+                    return False, 0
+
         if input_behavior == 'lever':
             return self._process_lever_input(function_name, input_type, raw_value, mapping_key, prev_states)
         elif input_type == "Button":
@@ -337,7 +539,6 @@ class InputMapper:
             return self._process_axis_input(function_name, raw_value, mapping_key, prev_states, input_behavior)
         elif input_type == "Hat":
             return self._process_hat_input(function_name, raw_value, mapping_key, prev_states, input_behavior)
-        
         return False, 0
     
     def _process_lever_input(self, function_name: str, input_type: str, raw_value: float, 
@@ -547,9 +748,19 @@ class InputMapper:
         
         return changed, self.reverser_positions[self.reverser_state]
     
-    def set_reverser_switch_mode(self, switch_mode: bool):
-        """Set the reverser switch mode"""
-        self.reverser_switch_mode = switch_mode
+    def set_reverser_switch_mode(self, mode):
+        """Set the reverser switch mode. Accepts 'axis', '2way', or '3way'"""
+        if mode == 'axis':
+            self.reverser_switch_mode = False
+            self.reverser_two_input_mode = False
+        elif mode == '2way':
+            self.reverser_switch_mode = True
+            self.reverser_two_input_mode = True
+        elif mode == '3way':
+            self.reverser_switch_mode = True
+            self.reverser_two_input_mode = False
+        else:
+            raise ValueError("Invalid reverser mode: {}".format(mode))
     
     def get_reverser_switch_mode(self):
         """Get the current reverser switch mode"""
@@ -561,11 +772,16 @@ class InputMapper:
         if not hasattr(self, 'reverser_3way_mappings'):
             self.reverser_3way_mappings = {}
         self.reverser_3way_mappings[position] = (device_id, input_type, input_index)
+        logger.info(f"Set reverser 3-way mapping: {position} -> {device_id}:{input_type}:{input_index}")
 
     def get_reverser_3way_mapping(self, position: str):
         """Get the mapping for a reverser 3-way switch position."""
         if hasattr(self, 'reverser_3way_mappings'):
-            return self.reverser_3way_mappings.get(position)
+            mapping = self.reverser_3way_mappings.get(position)
+            if mapping is None:
+                logger.warning(f"No mapping found for Reverser 3way {position}")
+            return mapping
+        logger.warning(f"No mapping found for Reverser 3way {position}")
         return None
 
     def clear_reverser_3way_mapping(self, position: str):
@@ -594,14 +810,23 @@ class InputMapper:
         return None
     
     def get_all_mappings(self) -> Dict[str, Tuple[int, str, int]]:
-        """Get all current mappings"""
-        return self.function_input_map.copy()
+        """Get all current mappings, including reverser 3-way mappings"""
+        all_mappings = self.function_input_map.copy()
+        
+        # Add reverser 3-way mappings with special naming
+        if hasattr(self, 'reverser_3way_mappings'):
+            for position, mapping in self.reverser_3way_mappings.items():
+                all_mappings[f"Reverser 3way {position}"] = mapping
+        
+        return all_mappings
     
     def clear_all_mappings(self) -> None:
-        """Clear all mappings"""
+        """Clear all mappings, including reverser 3-way mappings"""
         self.function_input_map.clear()
         self.reverse_axis_settings.clear()
-        logger.info("Cleared all mappings")
+        if hasattr(self, 'reverser_3way_mappings'):
+            self.reverser_3way_mappings.clear()
+        logger.info("Cleared all mappings (including reverser 3-way)")
     
     def get_mapped_functions(self) -> List[str]:
         """Get list of functions that have mappings"""
@@ -646,11 +871,26 @@ class InputMapper:
         """
         Process brake input with direct mapping for better responsiveness
         """
+        # Store the original raw value for logging
+        original_value = value
+        
+        # Apply axis reversal if configured
+        if self.get_axis_reverse(function_name):
+            value = -value
+        
+        # Account for joysticks that don't reach full range (common issue)
+        # Many joysticks only reach ~0.95-0.98 instead of true 1.0
+        # Expand the range slightly to ensure we can reach 0 and 255
+        if value > 0.95:
+            value = 1.0  # Force full range for values very close to 1.0
+        elif value < -0.95:
+            value = -1.0  # Force full range for values very close to -1.0
+        
         # Direct mapping from -1.0 to 1.0 to 0-255 range with minimal processing
         # This provides immediate response to control movements
         if function_name == "Train Brake Lever":
-            # Slight bias toward release position for train brakes
-            brake_val = int(((value + 1.05) / 2.1) * 255)
+            # Standard mapping for train brake lever: -1.0 = full release (0), +1.0 = full emergency (255)
+            brake_val = int(((value + 1.0) / 2.0) * 255)
         elif function_name == "Independent Brake Lever":
             # Standard mapping for independent brake
             brake_val = int(((value + 1.0) / 2.0) * 255)
@@ -668,7 +908,7 @@ class InputMapper:
         # Ensure value stays in valid range
         brake_val = max(0, min(255, brake_val))
         
-        # Log at INFO level for debugging
-        logger.info(f"Brake {function_name}: axis={value:.2f}, value={brake_val}")
+        # Enhanced logging to show raw input vs processed output
+        logger.info(f"Brake {function_name}: raw_axis={original_value:.3f}, processed_axis={value:.3f}, final_value={brake_val} (range: 0=release, 255=emergency)")
         
         return brake_val

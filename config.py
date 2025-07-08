@@ -38,8 +38,8 @@ class FunctionMapping:
         ("Bell", 2),
         ("Distance Counter", 3),
         ("Dyn Brake Lever", 4),
-        ("Headlight_Front", 5),
-        ("Headlight_Rear", 6),
+        ("Headlight Front", 5),
+        ("Headlight Rear", 6),
         ("Horn", 8),
         ("Independent Brake Lever", 9),
         ("Independent Bailoff", 10),
@@ -50,12 +50,16 @@ class FunctionMapping:
         ("Throttle Lever", 16),
         ("Train Brake Lever", 18),
         ("Wiper Switch", 19),
+        ("Circuit Breaker Control", 37),
+        ("Circuit Breaker DynBrake", 38),
+        ("Circuit Breaker EngRun", 39),
+        ("Circuit Breaker GenField", 10),
         ("Cab Light Switch", 41),
         ("Step Light Switch", 42),
         ("Gauge Light Switch", 43),
         ("EOT Emg Stop", 44),
         ("HEP Switch", 52),
-        ("SlowSpeedOnOff", 55),
+        ("Slow Speed Toggle", 55),
         ("Slow Speed Increment", 56),
         ("Slow Speed Decrement", 57),
         ("DPU Throttle Increase", 58),
@@ -63,6 +67,9 @@ class FunctionMapping:
         ("DPU Dyn-Brake Setup", 60),
         ("DPU Fence Increase", 61),
         ("DPU Fence Decrease", 62),
+        # --- Combined lever support ---
+        ("Combined Throttle/Dyn", 100),
+        ("Throttle/Dyn Toggle", 101),
     ]
     
     INPUT_TYPES = {
@@ -77,16 +84,20 @@ class FunctionMapping:
         'Train Brake Lever': 'lever',
         'Reverser Lever': 'lever',
         'Distance Counter': '3way',  # 3-way toggle
-        'Headlight_Front': '3way',   # 3-way toggle
-        'Headlight_Rear': '3way',    # 3-way toggle
+        'Headlight Front': '3way',   # 3-way toggle
+        'Headlight Rear': '3way',    # 3-way toggle
         'Wiper Switch': '4way',      # 4-way toggle
         'Park-Brake Set': 'momentary',
         'Park-Brake Release': 'momentary',
+        'Circuit Breaker Control': 'toggle',
+        'Circuit Breaker DynBrake': 'toggle',
+        'Circuit Breaker EngRun': 'toggle',
+        'Circuit Breaker GenField': 'toggle',
         'Cab Light Switch': 'toggle',
         'Step Light Switch': 'toggle',
         'Gauge Light Switch': 'toggle',
         'HEP Switch': 'toggle',
-        'SlowSpeedOnOff': 'toggle',
+        'Slow Speed Toggle': 'toggle',
         'Slow Speed Increment': 'momentary',
         'Slow Speed Decrement': 'momentary',
         'DPU Throttle Increase': 'momentary',
@@ -95,6 +106,9 @@ class FunctionMapping:
         'DPU Fence Increase': 'momentary',
         'DPU Fence Decrease': 'momentary',
         'Independent Brake Lever': 'lever',
+        # --- Combined lever support ---
+        'Combined Throttle/Dyn': 'lever',
+        'Throttle/Dyn Toggle': 'button',
     }
     
     CATEGORIES = {
@@ -102,13 +116,21 @@ class FunctionMapping:
             # Lever controls with reverse options first
             "Throttle Lever", "Train Brake Lever", "Independent Brake Lever", 
             "Dyn Brake Lever", "Reverser Lever",
-            # Other controls
-            "Sander", "Horn", "Bell", "Alerter"
+            # --- Combined lever support ---
+            "Combined Throttle/Dyn", "Throttle/Dyn Toggle"
+        ],
+        "Cab Controls": [
+            "Sander", "Horn", "Bell", "Alerter", "Independent Bailoff", "Distance Counter"
         ],
         "Lights and Wipers": [
             # No lever controls in this category, but keeping logical order
-            "Headlight_Front", "Headlight_Rear", "Wiper Switch", 
+            "Headlight Front", "Headlight Rear", "Wiper Switch", 
             "Cab Light Switch", "Step Light Switch", "Gauge Light Switch"
+        ],
+        "Electrical": [
+            # No lever controls in this category  
+            "HEP Switch", "Circuit Breaker Control", "Circuit Breaker DynBrake", "Circuit Breaker EngRun", 
+            "Circuit Breaker GenField",
         ],
         "DPU": [
             # No lever controls in this category
@@ -117,8 +139,8 @@ class FunctionMapping:
         ],
         "Misc": [
             # No lever controls in this category  
-            "EOT Emg Stop", "HEP Switch", "SlowSpeedOnOff", "Slow Speed Increment", 
-            "Slow Speed Decrement", "Independent Bailoff", "Distance Counter", 
+            "EOT Emg Stop",  "Slow Speed Toggle", "Slow Speed Increment", 
+            "Slow Speed Decrement", 
             "Park-Brake Set", "Park-Brake Release"
         ]
     }

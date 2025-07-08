@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 
 class Run8ControlConductor:
+    def toggle_throttle_mode(self, mode: str) -> None:
+        """Toggle between throttle modes: separate, toggle, split"""
+        self.throttle_mode = mode
+        self.input_mapper.set_throttle_mode(mode)
+        self.ui_manager.set_throttle_mode(mode)
     """Main application class that coordinates all modules"""
     
     def __init__(self):
@@ -66,12 +71,20 @@ class Run8ControlConductor:
         # Reverser mode (default to axis)
         self.reverser_switch_mode = False
 
+        # Combined throttle/dyn mode state
+        self.combined_toggle_state = False  # False=Throttle, True=Dynamic
+        self.last_toggle_button_state = False  # Track button state for edge detection
+
         # Setup UI callbacks
         self._setup_ui_callbacks()
 
         # Initialize with default values
         self.ui_manager.set_ip_address(DEFAULT_IP)
         self.ui_manager.set_port(DEFAULT_PORT)
+
+        # Initialize throttle mode sync
+        initial_throttle_mode = self.ui_manager.get_throttle_mode()
+        self.input_mapper.set_throttle_mode(initial_throttle_mode)
 
         # Load saved mappings and refresh devices
         self.load_mappings()
@@ -91,21 +104,19 @@ class Run8ControlConductor:
         self.ui_manager.set_map_input_callback(self.map_input)
         self.ui_manager.set_clear_mapping_callback(self.clear_mapping)
         self.ui_manager.set_reverser_mode_callback(self.toggle_reverser_mode)
+        self.ui_manager.set_throttle_mode_callback(self.toggle_throttle_mode)
     
-    def toggle_reverser_mode(self, switch_mode: bool) -> None:
-        """Toggle between axis and 3-position switch mode for the reverser
-        
+    def toggle_reverser_mode(self, mode: str) -> None:
+        """Toggle between axis, 2-way, and 3-way switch mode for the reverser
         Args:
-            switch_mode: True for 3-position switch mode, False for axis mode
+            mode: 'axis', '2way', or '3way'
         """
-        self.reverser_switch_mode = switch_mode
-        logger.info(f"Reverser mode set to: {'3-position switch' if switch_mode else 'axis'}")
-        
+        self.reverser_switch_mode = (mode != 'axis')
+        logger.info(f"Reverser mode set to: {mode}")
         # Update the input mapper with the new mode
-        self.input_mapper.set_reverser_switch_mode(switch_mode)
-        
+        self.input_mapper.set_reverser_switch_mode(mode)
         # Update the UI to reflect the current mode
-        self.ui_manager.set_reverser_mode(switch_mode)
+        self.ui_manager.set_reverser_mode(mode)
     
     def start_application(self) -> None:
         """Start the input processing and UDP communication"""
@@ -214,27 +225,25 @@ class Run8ControlConductor:
             return
 
         try:
-            # Get current mappings
-            mappings = self.input_mapper.get_all_mappings()
-            if not mappings:
+            # Process inputs from input manager first
+            inputs = self.input_manager.process_inputs()
+            if not inputs:
                 return
 
-            # Process inputs from input manager
-            inputs = self.input_manager.process_inputs()
-
-            # --- 3-way reverser switch mode integration ---
-            if self.reverser_switch_mode:
+            # --- 2-way/3-way reverser switch mode integration ---
+            mode = self.ui_manager.get_reverser_mode() if hasattr(self, 'ui_manager') else 'axis'
+            if mode in ("2way", "3way"):
                 # Build input_state dict: (device_id, input_type, input_index) -> value
                 input_state = {}
                 for device_id, input_type, input_index, value in inputs:
                     input_state[(device_id, input_type, input_index)] = value
-                # Update reverser state from 3-way inputs
+                # Update reverser state from mapped switch inputs
                 changed = self.input_mapper.update_reverser_3way_state_from_inputs(input_state)
-                if changed or self.state_tracker.get_state('last_reverser_send_time', 0) < time.time() - 0.5:
-                    # Get the Run8 function ID for the reverser
+                # In 2-way mode, always send the packet if state changes or at interval
+                send_interval = 0.25 if mode == "2way" else 0.5
+                if changed or self.state_tracker.get_state('last_reverser_send_time', 0) < time.time() - send_interval:
                     function_id = self.input_mapper.function_dict.get("Reverser Lever")
                     if function_id:
-                        # Map state to correct Run8 values: forward=255, neutral=127, reverse=0
                         state = getattr(self.input_mapper, 'reverser_state', None)
                         reverser_positions = getattr(self.input_mapper, 'reverser_positions', {
                             "forward": 255,
@@ -244,45 +253,88 @@ class Run8ControlConductor:
                         value = reverser_positions.get(state, 127)
                         self.pending_commands[function_id] = value
                         self.state_tracker.states['last_reverser_send_time'] = time.time()
-                        logger.info(f"Queued 3-way reverser command: state={state}, value={value}")
+                        logger.info(f"Queued {mode} reverser command: state={state}, value={value}")
 
-            # --- Normal input processing ---
-            for device_id, input_type, input_index, value in inputs:
-                # Find functions mapped to this input
-                for function_name, (mapped_device, mapped_type, mapped_index) in mappings.items():
-                    if (device_id == mapped_device and 
-                        input_type == mapped_type and 
-                        input_index == mapped_index):
+            # --- Combined Throttle/Dyn logic ---
+            throttle_mode = self.ui_manager.get_throttle_mode() if hasattr(self, 'ui_manager') else 'separate'
+            if throttle_mode in ("toggle", "split"):
+                throttle_lever_value = None
+                toggle_button_value = None
+                # Use the mapping for "Throttle Lever" for all combined modes
+                throttle_mapping = self.input_mapper.function_input_map.get("Throttle Lever")
+                toggle_mapping = self.input_mapper.function_input_map.get("Throttle/Dyn Toggle")
+                
+                for device_id, input_type, input_index, value in inputs:
+                    if throttle_mapping and (device_id, input_type, input_index) == throttle_mapping:
+                        throttle_lever_value = value
+                        logger.debug(f"Combined lever input: {value}")
+                    if throttle_mode == "toggle" and toggle_mapping and (device_id, input_type, input_index) == toggle_mapping:
+                        toggle_button_value = value
+                        logger.debug(f"Toggle button input: {value}")
+                
+                # Update toggle state if needed (detect button press edge)
+                if throttle_mode == "toggle" and toggle_button_value is not None:
+                    # Convert to boolean for button state
+                    current_button_pressed = bool(toggle_button_value)
+                    # Toggle on button press (rising edge)
+                    if current_button_pressed and not self.last_toggle_button_state:
+                        self.combined_toggle_state = not self.combined_toggle_state
+                        self.input_mapper.set_combined_toggle_state(self.combined_toggle_state)
+                        mode_name = "Dynamic Brake" if self.combined_toggle_state else "Throttle"
+                        logger.info(f"Toggle switched to: {mode_name}")
+                    self.last_toggle_button_state = current_button_pressed
+                
+                # Process combined lever
+                if throttle_lever_value is not None:
+                    # Apply axis reverse setting if configured for "Throttle Lever"
+                    reverse_setting = self.ui_manager.get_reverse_axis_setting("Throttle Lever")
+                    if reverse_setting:
+                        throttle_lever_value = -throttle_lever_value
+                        logger.debug(f"Applied axis reverse: value now {throttle_lever_value}")
+                    
+                    if throttle_mode == "toggle":
+                        results = self.input_mapper.process_combined_lever_input(throttle_lever_value, self.combined_toggle_state)
+                    else:  # split mode
+                        results = self.input_mapper.process_combined_lever_input(throttle_lever_value, False)
+                    
+                    logger.debug(f"Combined lever results: {results}")
+                    for fid, val in results:
+                        self.pending_commands[fid] = val
+                        logger.debug(f"Queued command: function_id={fid}, value={val}")
+                return  # Skip normal throttle/dyn processing
 
-                        # Special handling for reverser in switch mode (skip normal processing)
-                        if function_name == "Reverser Lever" and self.reverser_switch_mode:
-                            continue
+            # --- Normal input processing for regular mappings ---
+            regular_mappings = self.input_mapper.function_input_map.copy()
+            if regular_mappings:
+                for device_id, input_type, input_index, value in inputs:
+                    for function_name, (mapped_device, mapped_type, mapped_index) in regular_mappings.items():
+                        if (device_id == mapped_device and 
+                            input_type == mapped_type and 
+                            input_index == mapped_index):
 
-                        # Special handling for brake controls
-                        if function_name in ["Train Brake Lever", "Independent Brake Lever", "Dyn Brake Lever"] and input_type == "Axis":
-                            function_id = self.input_mapper.function_dict.get(function_name)
-                            if function_id:
-                                processed_value = self.input_mapper.process_brake_input(function_name, value)
-                                self.pending_commands[function_id] = processed_value
+                            if function_name == "Reverser Lever" and self.reverser_switch_mode:
                                 continue
 
-                        # Normal input processing for all other functions
-                        changed, processed_value = self.input_mapper.process_input_value(
-                            function_name, device_id, input_type, input_index, value, 
-                            self.state_tracker.states
-                        )
+                            if function_name in ["Train Brake Lever", "Independent Brake Lever", "Dyn Brake Lever"] and input_type == "Axis":
+                                function_id = self.input_mapper.function_dict.get(function_name)
+                                if function_id:
+                                    processed_value = self.input_mapper.process_brake_input(function_name, value)
+                                    self.pending_commands[function_id] = processed_value
+                                    continue
 
-                        if changed:
-                            # Get the Run8 function ID
-                            function_id = self.input_mapper.function_dict.get(function_name)
-                            if function_id:
-                                # Queue the command for sending
-                                self.pending_commands[function_id] = processed_value
+                            changed, processed_value = self.input_mapper.process_input_value(
+                                function_name, device_id, input_type, input_index, value, 
+                                self.state_tracker.states
+                            )
 
-                        # Update reverse axis settings from UI
-                        if input_type == 'Axis' and function_name != "Reverser Lever" or (function_name == "Reverser Lever" and not self.reverser_switch_mode):
-                            reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
-                            self.input_mapper.set_axis_reverse(function_name, reverse_setting)
+                            if changed:
+                                function_id = self.input_mapper.function_dict.get(function_name)
+                                if function_id:
+                                    self.pending_commands[function_id] = processed_value
+
+                            if input_type == 'Axis' and function_name != "Reverser Lever" or (function_name == "Reverser Lever" and not self.reverser_switch_mode):
+                                reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
+                                self.input_mapper.set_axis_reverse(function_name, reverse_setting)
         except Exception as e:
             logger.error(f"Error processing inputs: {e}")
     
@@ -480,9 +532,16 @@ class Run8ControlConductor:
         try:
             if self.input_mapper.load_mappings_from_csv(file_path):
                 # Get the reverser mode from the input mapper
-                self.reverser_switch_mode = self.input_mapper.get_reverser_switch_mode()
-                # Update UI with the loaded reverser mode
-                self.ui_manager.set_reverser_mode(self.reverser_switch_mode)
+                # Determine mode string from input_mapper state
+                if self.input_mapper.reverser_switch_mode:
+                    if getattr(self.input_mapper, 'reverser_two_input_mode', False):
+                        mode = '2way'
+                    else:
+                        mode = '3way'
+                else:
+                    mode = 'axis'
+                self.reverser_switch_mode = (mode != 'axis')
+                self.ui_manager.set_reverser_mode(mode)
                 
                 self.update_mapping_displays()
                 if file_path:

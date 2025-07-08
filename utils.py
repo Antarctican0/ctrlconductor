@@ -384,3 +384,55 @@ def retry_on_failure(max_retries: int = 3, delay: float = 1.0) -> Callable:
             return None
         return wrapper
     return decorator
+
+
+def test_brake_input_mapping() -> None:
+    """
+    Test function to verify that brake input mapping works correctly.
+    This function demonstrates the fix for the train brake lever range issue.
+    """
+    # Import here to avoid circular imports
+    from mapping_logic import InputMapper
+    
+    print("Testing brake input mapping...")
+    print("=" * 60)
+    
+    # Create an InputMapper instance
+    mapper = InputMapper()
+    
+    # Test cases: axis values including realistic joystick ranges
+    test_values = [-1.0, -0.97, -0.95, -0.5, 0.0, 0.5, 0.95, 0.97, 0.98, 1.0]
+    
+    print("Train Brake Lever mapping test:")
+    print("Raw Input -> Output Value (0=release, 255=emergency)")
+    print("-" * 60)
+    
+    for axis_value in test_values:
+        output_value = mapper.process_brake_input("Train Brake Lever", axis_value)
+        print(f"{axis_value:+6.2f}    ->     {output_value:3d}")
+    
+    print("\nKey behaviors:")
+    print("  Values >= +0.97 -> 255 (Full emergency) - compensates for joystick limits")
+    print("  Values <= -0.97 -> 0   (Full release)   - compensates for joystick limits")
+    print("  This ensures full brake range even with imperfect joystick hardware")
+    
+    # Test axis reversal
+    print("\n" + "=" * 60)
+    print("Testing with axis reversal enabled:")
+    mapper.set_axis_reverse("Train Brake Lever", True)
+    
+    print("Raw Input -> Output Value (with reversal)")
+    print("-" * 60)
+    
+    for axis_value in test_values:
+        output_value = mapper.process_brake_input("Train Brake Lever", axis_value)
+        print(f"{axis_value:+6.2f}    ->     {output_value:3d}")
+    
+    print("\nWith reversal, the axis direction is inverted:")
+    print("  Values >= +0.97 -> 0   (Full release)")
+    print("  Values <= -0.97 -> 255 (Full emergency)")
+
+
+if __name__ == "__main__":
+    # Run test if this file is executed directly
+    test_brake_input_mapping()
