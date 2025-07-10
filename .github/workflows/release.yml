@@ -34,9 +34,6 @@ jobs:
         copy dist\Run8ControlConductor.exe release\
         copy README.md release\
         copy LICENSE release\
-        copy CHANGELOG.md release\
-        copy release\QUICK_START_GUIDE.md release\ 2>NUL || echo "Quick start guide not found"
-        copy release\README.txt release\ 2>NUL || echo "Release readme not found"
         copy release\"Start Run8 Control Conductor.bat" release\ 2>NUL || echo "Batch file not found"
         
     - name: Create ZIP archive
