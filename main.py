@@ -301,7 +301,6 @@ class Run8ControlConductor:
                     for fid, val in results:
                         self.pending_commands[fid] = val
                         logger.debug(f"Queued command: function_id={fid}, value={val}")
-                return  # Skip normal throttle/dyn processing
 
             # --- Normal input processing for regular mappings ---
             regular_mappings = self.input_mapper.function_input_map.copy()
@@ -313,6 +312,16 @@ class Run8ControlConductor:
                             input_index == mapped_index):
 
                             if function_name == "Reverser Lever" and self.reverser_switch_mode:
+                                continue
+
+                            # Skip throttle lever processing if in combined mode (it's handled above)
+                            if throttle_mode in ("toggle", "split") and function_name == "Throttle Lever":
+                                continue
+
+                            # Skip dyn brake lever processing if in combined mode AND it's the same mapping as throttle lever
+                            if (throttle_mode in ("toggle", "split") and 
+                                function_name == "Dyn Brake Lever" and 
+                                self.input_mapper.function_input_map.get("Throttle Lever") == (mapped_device, mapped_type, mapped_index)):
                                 continue
 
                             if function_name in ["Train Brake Lever", "Independent Brake Lever", "Dyn Brake Lever"] and input_type == "Axis":
