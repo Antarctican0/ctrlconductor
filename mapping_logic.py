@@ -271,8 +271,8 @@ class InputMapper:
         self.reverse_axis_settings: Dict[str, bool] = {}
         self.multiway_states: Dict[str, int] = {
             'Distance Counter': 0,
-            'Headlight_Front': 0,
-            'Headlight_Rear': 0,
+            'Headlight Front': 0,
+            'Headlight Rear': 0,
             'Wiper Switch': 0
         }
         self.function_dict = {name: value for name, value in FunctionMapping.FUNCTIONS}
@@ -665,6 +665,52 @@ class InputMapper:
             if current_active and not prev_active:
                 prev_states[mapping_key] = raw_value
                 return True, 1
+                
+        elif input_behavior == '3way':
+            # 3-way switch: Down=0, Center=1, Up=2
+            # Hat values: (0, -1) = Down, (0, 0) = Center, (0, 1) = Up
+            if raw_value == (0, -1):  # Down
+                new_value = 0
+            elif raw_value == (0, 0):  # Center
+                new_value = 1
+            elif raw_value == (0, 1):  # Up
+                new_value = 2
+            else:
+                # Handle diagonal hat positions by using dominant direction
+                if raw_value[1] > 0:  # Any upward component
+                    new_value = 2
+                elif raw_value[1] < 0:  # Any downward component
+                    new_value = 0
+                else:  # Horizontal or unknown
+                    new_value = 1
+            
+            # Get previous 3-way value
+            prev_3way_value = getattr(self, f'_last_3way_{function_name}', 1)  # Default to center
+            if new_value != prev_3way_value:
+                setattr(self, f'_last_3way_{function_name}', new_value)
+                prev_states[mapping_key] = raw_value
+                return True, new_value
+                
+        elif input_behavior == '4way':
+            # 4-way switch: positions 0, 1, 2, 3
+            # Hat values: (0, -1) = 0, (-1, 0) = 1, (0, 1) = 2, (1, 0) = 3, (0, 0) = center/default
+            if raw_value == (0, -1):  # Down
+                new_value = 0
+            elif raw_value == (-1, 0):  # Left
+                new_value = 1
+            elif raw_value == (0, 1):  # Up
+                new_value = 2
+            elif raw_value == (1, 0):  # Right
+                new_value = 3
+            else:
+                new_value = 0  # Default to first position
+            
+            # Get previous 4-way value
+            prev_4way_value = getattr(self, f'_last_4way_{function_name}', 0)  # Default to first position
+            if new_value != prev_4way_value:
+                setattr(self, f'_last_4way_{function_name}', new_value)
+                prev_states[mapping_key] = raw_value
+                return True, new_value
         
         prev_states[mapping_key] = raw_value
         return False, 0
