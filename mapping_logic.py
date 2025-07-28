@@ -307,10 +307,21 @@ class InputMapper:
             return False
         
         try:
-            # Always clear 3-way mappings before loading
+            # Always clear existing data before loading
+            self.function_input_map.clear()
+            self.reverse_axis_settings.clear()
             self.reverser_3way_mappings = {}
+            
+            # Reset reverser mode to defaults
+            self.reverser_switch_mode = False
+            self.reverser_two_input_mode = False
+            
             with open(mapping_file, 'r', newline='', encoding='utf-8') as file:
                 reader = csv.DictReader(file)
+                loaded_mappings = 0
+                loaded_reverser_mappings = 0
+                loaded_new_reverser_mode = False  # Track if we found the new format
+                
                 for row in reader:
                     function_name = row.get('Function')
                     device_id = row.get('Device')
@@ -318,44 +329,73 @@ class InputMapper:
                     input_index = row.get('Index')
                     reverse_axis = row.get('Reverse', 'False')
 
-                    # Handle special reverser switch mode row
+                    # Handle new reverser mode format (preferred)
+                    if function_name == '__REVERSER_MODE__':
+                        mode_string = str(device_id).lower()  # Mode is stored in Device field
+                        logger.debug(f"Loading reverser mode: {mode_string}")
+                        try:
+                            self.set_reverser_switch_mode(mode_string)
+                            loaded_new_reverser_mode = True
+                            logger.info(f"Loaded reverser mode: {mode_string}")
+                        except ValueError as e:
+                            logger.warning(f"Invalid reverser mode '{mode_string}', defaulting to axis: {e}")
+                            self.set_reverser_switch_mode('axis')
+                            loaded_new_reverser_mode = True
+                        continue
+
+                    # Handle legacy reverser switch mode row (for backward compatibility)
                     if function_name == '__REVERSER_SWITCH_MODE__':
-                        self.reverser_switch_mode = str(reverse_axis).lower() == 'true'
-                        logger.debug(f"Loaded reverser switch mode: {self.reverser_switch_mode}")
+                        legacy_switch_mode = str(reverse_axis).lower() == 'true'
+                        logger.debug(f"Loading legacy reverser switch mode: {legacy_switch_mode}")
+                        # Only use legacy format if new format wasn't found
+                        if not loaded_new_reverser_mode:
+                            if legacy_switch_mode:
+                                # Default to 3way for legacy true values
+                                self.set_reverser_switch_mode('3way')
+                                logger.info("Loaded legacy reverser mode as 3way")
+                            else:
+                                self.set_reverser_switch_mode('axis')
+                                logger.info("Loaded legacy reverser mode as axis")
+                        else:
+                            logger.debug("Skipping legacy reverser mode (new format already loaded)")
                         continue
 
                     # Handle reverser 3-way switch mappings
                     if function_name and function_name.startswith('__REVERSER_3WAY_'):
                         pos = function_name.replace('__REVERSER_3WAY_', '').lower().replace('__', '')
                         try:
-                            if device_id is not None and input_index is not None and input_type is not None:
+                            if device_id and input_index and input_type:
                                 device_id_int = int(device_id)
                                 input_index_int = int(input_index)
                                 self.set_reverser_3way_mapping(pos, device_id_int, str(input_type), input_index_int)
+                                loaded_reverser_mappings += 1
                                 logger.debug(f"Loaded reverser 3-way mapping: {pos} -> {device_id_int}:{input_type}:{input_index_int}")
-                        except Exception as e:
+                        except (ValueError, TypeError) as e:
                             logger.error(f"Invalid reverser 3-way mapping for {pos}: {e}")
                         continue
 
-                    if all([function_name is not None, device_id is not None, input_type is not None, input_index is not None]):
+                    # Handle regular function mappings
+                    if all([function_name, device_id is not None, input_type, input_index is not None]):
                         try:
-                            function_name_str = str(function_name)
-                            input_type_str = str(input_type)
-                            if input_index is None or device_id is None:
-                                raise ValueError("Input index or device id is None")
+                            function_name_str = str(function_name).strip()
+                            input_type_str = str(input_type).strip()
                             input_index_int = int(input_index)
                             device_id_int = int(device_id)
+                            
                             self.function_input_map[function_name_str] = (
                                 device_id_int, 
                                 input_type_str, 
                                 input_index_int
                             )
                             self.reverse_axis_settings[function_name_str] = str(reverse_axis).lower() == 'true'
-                            logger.debug(f"Loaded mapping: {function_name_str} -> {device_id_int}:{input_type_str}:{input_index_int}")
+                            loaded_mappings += 1
+                            logger.debug(f"Loaded mapping: {function_name_str} -> {device_id_int}:{input_type_str}:{input_index_int} (reverse: {self.reverse_axis_settings[function_name_str]})")
                         except (ValueError, TypeError) as e:
                             logger.error(f"Invalid mapping data for {function_name}: {e}")
+                    elif function_name and not function_name.startswith('__'):
+                        logger.warning(f"Skipping incomplete mapping for {function_name}: device={device_id}, type={input_type}, index={input_index}")
 
-            logger.info(f"Loaded {len(self.function_input_map)} mappings from {mapping_file}")
+            logger.info(f"Loaded {loaded_mappings} regular mappings and {loaded_reverser_mappings} reverser 3-way mappings from {mapping_file}")
             return True
 
         except Exception as e:
@@ -375,41 +415,82 @@ class InputMapper:
         mapping_file = file_path if file_path else self.mapping_file
         
         try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(mapping_file), exist_ok=True)
+            
             with open(mapping_file, 'w', newline='', encoding='utf-8') as file:
                 fieldnames = ['Function', 'Device', 'Type', 'Index', 'Reverse']
                 writer = csv.DictWriter(file, fieldnames=fieldnames)
                 writer.writeheader()
                 
+                saved_mappings = 0
+                saved_reverser_mappings = 0
+                
                 # Save regular mappings
                 for function_name, (device_id, input_type, input_index) in self.function_input_map.items():
-                    writer.writerow({
-                        'Function': function_name,
-                        'Device': device_id,
-                        'Type': input_type,
-                        'Index': input_index,
-                        'Reverse': self.reverse_axis_settings.get(function_name, False)
-                    })
-                # Save reverser 3-way switch mappings if present
-                if hasattr(self, 'reverser_3way_mappings'):
-                    for pos, mapping in self.reverser_3way_mappings.items():
-                        device_id, input_type, input_index = mapping
+                    try:
                         writer.writerow({
-                            'Function': f'__REVERSER_3WAY_{pos.upper()}__',
+                            'Function': function_name,
                             'Device': device_id,
                             'Type': input_type,
                             'Index': input_index,
-                            'Reverse': ''
+                            'Reverse': self.reverse_axis_settings.get(function_name, False)
                         })
-                # Save reverser switch mode as a special row
-                writer.writerow({
-                    'Function': '__REVERSER_SWITCH_MODE__',
-                    'Device': '',
-                    'Type': '',
-                    'Index': '',
-                    'Reverse': self.reverser_switch_mode
-                })
+                        saved_mappings += 1
+                    except Exception as e:
+                        logger.error(f"Failed to save mapping for {function_name}: {e}")
+                        
+                # Save reverser 3-way switch mappings if present
+                if hasattr(self, 'reverser_3way_mappings') and self.reverser_3way_mappings:
+                    for pos, mapping in self.reverser_3way_mappings.items():
+                        try:
+                            device_id, input_type, input_index = mapping
+                            writer.writerow({
+                                'Function': f'__REVERSER_3WAY_{pos.upper()}__',
+                                'Device': device_id,
+                                'Type': input_type,
+                                'Index': input_index,
+                                'Reverse': ''
+                            })
+                            saved_reverser_mappings += 1
+                        except Exception as e:
+                            logger.error(f"Failed to save reverser 3-way mapping for {pos}: {e}")
+                        
+                # Save reverser mode configuration as special rows
+                # Determine the string mode to save
+                try:
+                    if self.reverser_switch_mode:
+                        if getattr(self, 'reverser_two_input_mode', False):
+                            mode_string = '2way'
+                        else:
+                            mode_string = '3way'
+                    else:
+                        mode_string = 'axis'
+                        
+                    writer.writerow({
+                        'Function': '__REVERSER_MODE__',
+                        'Device': mode_string,
+                        'Type': '',
+                        'Index': '',
+                        'Reverse': ''
+                    })
+                    logger.debug(f"Saved reverser mode: {mode_string}")
                     
-            logger.info(f"Saved {len(self.function_input_map)} mappings to {mapping_file}")
+                    # Also save the legacy format for backward compatibility
+                    writer.writerow({
+                        'Function': '__REVERSER_SWITCH_MODE__',
+                        'Device': '',
+                        'Type': '',
+                        'Index': '',
+                        'Reverse': self.reverser_switch_mode
+                    })
+                    logger.debug(f"Saved legacy reverser switch mode: {self.reverser_switch_mode}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to save reverser mode configuration: {e}")
+                    
+            logger.info(f"Saved {saved_mappings} regular mappings and {saved_reverser_mappings} reverser 3-way mappings to {mapping_file}")
+            logger.info(f"Reverser mode: {'3way' if self.reverser_switch_mode and not getattr(self, 'reverser_two_input_mode', False) else '2way' if self.reverser_switch_mode else 'axis'}")
             return True
             
         except Exception as e:
@@ -811,6 +892,37 @@ class InputMapper:
     def get_reverser_switch_mode(self):
         """Get the current reverser switch mode"""
         return self.reverser_switch_mode
+    
+    def get_current_mode_string(self) -> str:
+        """Get the current reverser mode as a string for debugging"""
+        if self.reverser_switch_mode:
+            if getattr(self, 'reverser_two_input_mode', False):
+                return '2way'
+            else:
+                return '3way'
+        else:
+            return 'axis'
+    
+    def validate_mappings(self) -> bool:
+        """Validate the current mappings for consistency"""
+        try:
+            # Check if all mapped functions exist in the function dictionary
+            for function_name in self.function_input_map:
+                if function_name not in self.function_dict:
+                    logger.warning(f"Mapping found for unknown function: {function_name}")
+            
+            # Check reverser 3-way mappings if in switch mode
+            if self.reverser_switch_mode and hasattr(self, 'reverser_3way_mappings'):
+                expected_positions = ['forward', 'neutral', 'reverse'] if not getattr(self, 'reverser_two_input_mode', False) else ['forward', 'reverse']
+                for pos in expected_positions:
+                    if pos not in self.reverser_3way_mappings:
+                        logger.warning(f"Missing reverser 3-way mapping for position: {pos}")
+                        
+            logger.debug(f"Validation complete. Mode: {self.get_current_mode_string()}, Mappings: {len(self.function_input_map)}")
+            return True
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            return False
     
     # --- Reverser 3-way switch support ---
     def set_reverser_3way_mapping(self, position: str, device_id: int, input_type: str, input_index: int):

@@ -81,3 +81,5 @@ build_exe.py
 test_3way_4way_switches.py
 test_headlight_debug.py
 udp_monitor_correct.py
+test_save_fix.py
+test_save_load.py

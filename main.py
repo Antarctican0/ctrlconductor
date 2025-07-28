@@ -540,8 +540,8 @@ class Run8ControlConductor:
         """Load mappings from file"""
         try:
             if self.input_mapper.load_mappings_from_csv(file_path):
-                # Get the reverser mode from the input mapper
-                # Determine mode string from input_mapper state
+                # Get the reverser mode from the input mapper after loading
+                # The input mapper now loads the mode correctly from the CSV
                 if self.input_mapper.reverser_switch_mode:
                     if getattr(self.input_mapper, 'reverser_two_input_mode', False):
                         mode = '2way'
@@ -549,16 +549,26 @@ class Run8ControlConductor:
                         mode = '3way'
                 else:
                     mode = 'axis'
+                    
+                # Sync the mode with main.py's state
                 self.reverser_switch_mode = (mode != 'axis')
+                
+                # Update the UI to reflect the loaded mode
                 self.ui_manager.set_reverser_mode(mode)
                 
+                # Update the input mapper to ensure consistency
+                self.input_mapper.set_reverser_switch_mode(mode)
+                
+                # Update mapping displays
                 self.update_mapping_displays()
+                
+                # Show success message
                 if file_path:
                     self.ui_manager.set_mapping_prompt(f"Mappings loaded from {file_path}")
-                    logger.info(f"Mappings loaded from {file_path}")
+                    logger.info(f"Mappings loaded from {file_path} (reverser mode: {mode})")
                 else:
                     self.ui_manager.set_mapping_prompt("Default mappings loaded successfully")
-                    logger.info("Default mappings loaded successfully")
+                    logger.info(f"Default mappings loaded successfully (reverser mode: {mode})")
             else:
                 if file_path:
                     self.ui_manager.set_mapping_prompt(f"No mappings found in {file_path}")
@@ -582,16 +592,32 @@ class Run8ControlConductor:
                 reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
                 self.input_mapper.set_axis_reverse(function_name, reverse_setting)
             
-            # Save the current reverser mode
-            self.input_mapper.set_reverser_switch_mode(self.reverser_switch_mode)
+            # Ensure the input mapper has the correct reverser mode before saving
+            # Convert boolean reverser_switch_mode to proper string mode
+            if self.reverser_switch_mode:
+                # Determine if it's 2way or 3way mode
+                if getattr(self.input_mapper, 'reverser_two_input_mode', False):
+                    mode = '2way'
+                else:
+                    mode = '3way'
+            else:
+                mode = 'axis'
             
+            # Set the mode in the input mapper to ensure consistency
+            self.input_mapper.set_reverser_switch_mode(mode)
+            
+            # Validate mappings before saving
+            if not self.input_mapper.validate_mappings():
+                logger.warning("Mapping validation found issues, but proceeding with save")
+            
+            # Perform the save
             if self.input_mapper.save_mappings(file_path):
                 if file_path:
                     self.ui_manager.set_mapping_prompt(f"Mappings saved to {file_path}")
-                    logger.info(f"Mappings saved to {file_path}")
+                    logger.info(f"Mappings saved to {file_path} (reverser mode: {mode})")
                 else:
                     self.ui_manager.set_mapping_prompt("Mappings saved successfully")
-                    logger.info("Mappings saved successfully")
+                    logger.info(f"Mappings saved successfully (reverser mode: {mode})")
             else:
                 self.ui_manager.set_mapping_prompt("Failed to save mappings")
                 logger.error("Failed to save mappings")
@@ -624,6 +650,23 @@ class Run8ControlConductor:
                     self.ui_manager.set_reverse_axis_setting(function_name, reverse_setting)
                 else:
                     self.ui_manager.update_mapping_display(function_name, "Not mapped")
+            
+            # Update reverser 3-way mappings if they exist
+            if hasattr(self.input_mapper, 'reverser_3way_mappings') and self.input_mapper.reverser_3way_mappings:
+                for pos in ['forward', 'neutral', 'reverse']:
+                    reverser_function_name = f"Reverser 3way {pos}"
+                    if pos in self.input_mapper.reverser_3way_mappings:
+                        device_id, input_type, input_index = self.input_mapper.reverser_3way_mappings[pos]
+                        display_text = format_input_display(device_id, input_type, input_index)
+                        self.ui_manager.update_mapping_display(reverser_function_name, display_text)
+                        logger.debug(f"Updated reverser 3-way display: {reverser_function_name} -> {display_text}")
+                    else:
+                        self.ui_manager.update_mapping_display(reverser_function_name, "Not mapped")
+            else:
+                # Clear reverser 3-way displays if no mappings exist
+                for pos in ['forward', 'neutral', 'reverse']:
+                    reverser_function_name = f"Reverser 3way {pos}"
+                    self.ui_manager.update_mapping_display(reverser_function_name, "Not mapped")
                     
         except Exception as e:
             logger.error(f"Error updating mapping displays: {e}")
