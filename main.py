@@ -20,6 +20,9 @@ import tkinter as tk
 import threading
 import time
 import logging
+import os
+import sys
+import json
 from typing import Optional, Dict, Any
 
 from config import DEFAULT_IP, DEFAULT_PORT, POLLING_INTERVAL, UDP_SEND_INTERVAL, FunctionMapping
@@ -75,6 +78,10 @@ class Run8ControlConductor:
         self.combined_toggle_state = False  # False=Throttle, True=Dynamic
         self.last_toggle_button_state = False  # Track button state for edge detection
 
+        # Auto-save settings
+        self.auto_save_enabled = True
+        self.auto_save_file = self._get_auto_save_file_path()
+
         # Setup UI callbacks
         self._setup_ui_callbacks()
 
@@ -86,8 +93,8 @@ class Run8ControlConductor:
         initial_throttle_mode = self.ui_manager.get_throttle_mode()
         self.input_mapper.set_throttle_mode(initial_throttle_mode)
 
-        # Load saved mappings and refresh devices
-        self.load_mappings()
+        # Load persistent mappings automatically and refresh devices
+        self._load_persistent_mappings()
         self.refresh_devices()
 
         logger.info("Run8 Control Conductor initialized successfully")
@@ -106,6 +113,141 @@ class Run8ControlConductor:
         self.ui_manager.set_reverser_mode_callback(self.toggle_reverser_mode)
         self.ui_manager.set_throttle_mode_callback(self.toggle_throttle_mode)
     
+    def _get_auto_save_file_path(self) -> str:
+        """Get the appropriate auto-save file path for persistent mappings"""
+        try:
+            # Try to use the application directory first (for portable installs)
+            # Handle both script and executable environments
+            if getattr(sys, 'frozen', False):
+                # Running as executable
+                app_dir = os.path.dirname(sys.executable)
+                logger.debug(f"Running as executable, app directory: {app_dir}")
+            else:
+                # Running as script
+                app_dir = os.path.dirname(os.path.abspath(__file__))
+                logger.debug(f"Running as script, app directory: {app_dir}")
+                
+            auto_save_file = os.path.join(app_dir, 'auto_mappings.csv')
+            
+            # Test if we can write to the application directory
+            test_file = os.path.join(app_dir, 'test_write.tmp')
+            try:
+                with open(test_file, 'w') as f:
+                    f.write('test')
+                os.remove(test_file)
+                # If we can write to app directory, use it
+                logger.info(f"Using app directory for auto-save: {auto_save_file}")
+                return auto_save_file
+            except (OSError, PermissionError):
+                # Can't write to app directory, use user data directory
+                logger.debug("App directory not writable, falling back to user data directory")
+                pass
+        except Exception as e:
+            logger.debug(f"Error accessing app directory: {e}")
+            pass
+            pass
+        
+        # Fall back to user's AppData/Local directory
+        try:
+            import platform
+            if platform.system() == 'Windows':
+                appdata_dir = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+                app_data_dir = os.path.join(appdata_dir, 'Run8ControlConductor')
+            else:
+                # For non-Windows systems
+                app_data_dir = os.path.join(os.path.expanduser('~'), '.run8controlconductor')
+            
+            # Create directory if it doesn't exist
+            os.makedirs(app_data_dir, exist_ok=True)
+            auto_save_file = os.path.join(app_data_dir, 'auto_mappings.csv')
+            logger.debug(f"Using user data directory for auto-save: {auto_save_file}")
+            return auto_save_file
+            
+        except Exception as e:
+            logger.warning(f"Failed to determine auto-save directory: {e}")
+            # Last resort: use temp directory
+            import tempfile
+            auto_save_file = os.path.join(tempfile.gettempdir(), 'run8_auto_mappings.csv')
+            logger.debug(f"Using temp directory for auto-save: {auto_save_file}")
+            return auto_save_file
+    
+    def _load_persistent_mappings(self) -> None:
+        """Load persistent mappings automatically"""
+        try:
+            if os.path.exists(self.auto_save_file):
+                logger.info(f"Loading persistent mappings from: {self.auto_save_file}")
+                self.load_mappings(self.auto_save_file)
+                # Verify the mappings were loaded
+                loaded_mappings = self.input_mapper.get_all_mappings()
+                logger.info(f"Persistent mappings loaded successfully: {len(loaded_mappings)} mappings")
+            else:
+                logger.info(f"No persistent mappings file found at: {self.auto_save_file}")
+                # Fall back to looking for legacy mappings file in multiple locations
+                legacy_locations = [
+                    # First try same directory as executable/script
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "input_mappings.csv"),
+                    # Then try current working directory
+                    os.path.join(os.getcwd(), "input_mappings.csv"),
+                    # Then try the directory where the script was originally located
+                    "input_mappings.csv"
+                ]
+                
+                legacy_file_found = False
+                for legacy_file in legacy_locations:
+                    if os.path.exists(legacy_file):
+                        logger.info(f"Importing legacy mappings from: {legacy_file}")
+                        self.load_mappings(legacy_file)
+                        # Auto-save the imported mappings for future use
+                        self._auto_save_mappings()
+                        legacy_file_found = True
+                        break
+                
+                if not legacy_file_found:
+                    logger.info("No persistent mappings found, starting with empty mappings")
+                    self.load_mappings()
+                    
+        except Exception as e:
+            logger.error(f"Error loading persistent mappings: {e}")
+            # Fall back to default behavior
+            self.load_mappings()
+    
+    def _auto_save_mappings(self) -> None:
+        """Automatically save current mappings to the persistent file"""
+        if not self.auto_save_enabled:
+            return
+            
+        try:
+            # Update reverse axis settings from UI before saving
+            for function_name in self.input_mapper.get_mapped_functions():
+                if function_name == "Reverser Lever" and self.reverser_switch_mode:
+                    # Skip reverse axis setting for reverser in switch mode
+                    continue
+                    
+                reverse_setting = self.ui_manager.get_reverse_axis_setting(function_name)
+                self.input_mapper.set_axis_reverse(function_name, reverse_setting)
+            
+            # Ensure the input mapper has the correct reverser mode before saving
+            if self.reverser_switch_mode:
+                # Determine if it's 2way or 3way mode
+                if getattr(self.input_mapper, 'reverser_two_input_mode', False):
+                    mode = '2way'
+                else:
+                    mode = '3way'
+            else:
+                mode = 'axis'
+            
+            # Set the mode in the input mapper to ensure consistency
+            self.input_mapper.set_reverser_switch_mode(mode)
+            
+            # Perform the auto-save
+            if self.input_mapper.save_mappings(self.auto_save_file):
+                logger.debug(f"Auto-saved mappings to: {self.auto_save_file}")
+            else:
+                logger.warning("Failed to auto-save mappings")
+                
+        except Exception as e:
+            logger.error(f"Error during auto-save: {e}")
+    
     def toggle_reverser_mode(self, mode: str) -> None:
         """Toggle between axis, 2-way, and 3-way switch mode for the reverser
         Args:
@@ -117,6 +259,8 @@ class Run8ControlConductor:
         self.input_mapper.set_reverser_switch_mode(mode)
         # Update the UI to reflect the current mode
         self.ui_manager.set_reverser_mode(mode)
+        # Auto-save the settings change
+        self._auto_save_mappings()
     
     def start_application(self) -> None:
         """Start the input processing and UDP communication"""
@@ -387,10 +531,63 @@ class Run8ControlConductor:
             # Update mapping displays
             self.update_mapping_displays()
             
-            logger.info(f"Refreshed devices - Found {len(devices)} devices")
+            # Log detailed device information
+            if devices:
+                logger.info(f"Refreshed devices - Found {len(devices)} devices")
+                thrustmaster_count = sum(1 for device in devices if any(tm in device.name.lower() 
+                                                                       for tm in ['thrustmaster', 'tm ', 't16000', 'twcs', 'hotas']))
+                if thrustmaster_count > 0:
+                    logger.info(f"Found {thrustmaster_count} Thrustmaster device(s)")
+                else:
+                    logger.info("No Thrustmaster devices detected")
+            else:
+                logger.warning("No devices detected after refresh")
+                
         except Exception as e:
             logger.error(f"Error refreshing devices: {e}")
             self.ui_manager.show_message("Error", f"Failed to refresh devices: {e}", "error")
+    
+    def force_refresh_devices(self) -> None:
+        """Force a complete device refresh (more aggressive)"""
+        try:
+            logger.info("Performing force device refresh...")
+            devices = self.input_manager.force_device_refresh()
+            self.ui_manager.populate_device_list(devices)
+            
+            # Populate mapping interface with all available functions
+            all_functions = [name for name, _ in FunctionMapping.FUNCTIONS]
+            self.ui_manager.populate_mapping_interface(all_functions)
+            
+            # Update mapping displays
+            self.update_mapping_displays()
+            
+            # Show result message
+            if devices:
+                thrustmaster_devices = [device for device in devices if any(tm in device.name.lower() 
+                                                                           for tm in ['thrustmaster', 'tm ', 't16000', 'twcs', 'hotas'])]
+                if thrustmaster_devices:
+                    self.ui_manager.show_message("Success", 
+                                                f"Force refresh completed! Found {len(thrustmaster_devices)} Thrustmaster device(s):\n" +
+                                                "\n".join(f"• {device.name}" for device in thrustmaster_devices),
+                                                "info")
+                else:
+                    self.ui_manager.show_message("Info", 
+                                                f"Force refresh completed. Found {len(devices)} device(s) but no Thrustmaster devices detected.",
+                                                "info")
+            else:
+                self.ui_manager.show_message("Warning", 
+                                            "Force refresh completed but no devices were detected.\n\n" +
+                                            "Please check:\n" +
+                                            "• Device is properly connected\n" +
+                                            "• Device drivers are installed\n" +
+                                            "• Device appears in Windows Device Manager",
+                                            "warning")
+                
+            logger.info(f"Force refresh completed - Found {len(devices)} devices")
+            
+        except Exception as e:
+            logger.error(f"Error during force refresh: {e}")
+            self.ui_manager.show_message("Error", f"Force refresh failed: {e}", "error")
     
     def on_device_toggle(self, device_index: int) -> None:
         """Handle device enable/disable toggle"""
@@ -492,6 +689,8 @@ class Run8ControlConductor:
                     self.ui_manager.update_mapping_display(function_name, display_text)
                     self.ui_manager.set_mapping_prompt(f"Successfully mapped 'Reverser {pos.capitalize()}' to {display_text}")
                     logger.info(f"Mapped Reverser 3way {pos} to {display_text}")
+                    # Auto-save the new mapping
+                    self._auto_save_mappings()
                 else:
                     existing_func = self.input_mapper.find_existing_mapping(device_id, detected_input_type, input_index)
                     if existing_func and existing_func != function_name:
@@ -515,6 +714,8 @@ class Run8ControlConductor:
                         self.ui_manager.update_mapping_display(function_name, display_text)
                         self.ui_manager.set_mapping_prompt(f"Successfully mapped '{function_name}' to {display_text}")
                         logger.info(f"Mapped {function_name} to {display_text}")
+                        # Auto-save the new mapping
+                        self._auto_save_mappings()
                     else:
                         self.ui_manager.set_mapping_prompt(f"Failed to map '{function_name}'")
                         logger.error(f"Failed to map {function_name}")
@@ -533,6 +734,8 @@ class Run8ControlConductor:
         if self.input_mapper.remove_mapping(function_name):
             self.ui_manager.update_mapping_display(function_name, "Not mapped")
             logger.info(f"Cleared mapping for {function_name}")
+            # Auto-save the change
+            self._auto_save_mappings()
         else:
             logger.warning(f"No mapping found for {function_name}")
     
@@ -563,10 +766,16 @@ class Run8ControlConductor:
                 self.update_mapping_displays()
                 
                 # Show success message
-                if file_path:
+                if file_path == self.auto_save_file:
+                    # This is loading persistent mappings
+                    self.ui_manager.set_mapping_prompt("Persistent mappings loaded successfully")
+                    logger.info(f"Persistent mappings loaded successfully (reverser mode: {mode})")
+                elif file_path:
+                    # This is a manual load from a specific file
                     self.ui_manager.set_mapping_prompt(f"Mappings loaded from {file_path}")
                     logger.info(f"Mappings loaded from {file_path} (reverser mode: {mode})")
                 else:
+                    # This is loading default/empty mappings
                     self.ui_manager.set_mapping_prompt("Default mappings loaded successfully")
                     logger.info(f"Default mappings loaded successfully (reverser mode: {mode})")
             else:
@@ -581,7 +790,7 @@ class Run8ControlConductor:
             self.ui_manager.show_message("Error", f"Failed to load mappings: {e}", "error")
     
     def save_mappings(self, file_path: Optional[str] = None) -> None:
-        """Save mappings to file"""
+        """Save mappings to file (for manual save/load of different configurations)"""
         try:
             # Update reverse axis settings from UI
             for function_name in self.input_mapper.get_mapped_functions():
@@ -616,8 +825,11 @@ class Run8ControlConductor:
                     self.ui_manager.set_mapping_prompt(f"Mappings saved to {file_path}")
                     logger.info(f"Mappings saved to {file_path} (reverser mode: {mode})")
                 else:
+                    # This is a save to the default location - also trigger auto-save
                     self.ui_manager.set_mapping_prompt("Mappings saved successfully")
                     logger.info(f"Mappings saved successfully (reverser mode: {mode})")
+                    # Update the persistent mappings as well
+                    self._auto_save_mappings()
             else:
                 self.ui_manager.set_mapping_prompt("Failed to save mappings")
                 logger.error("Failed to save mappings")
@@ -632,11 +844,14 @@ class Run8ControlConductor:
             self.update_mapping_displays()
             self.ui_manager.set_mapping_prompt("All mappings cleared")
             logger.info("All mappings cleared")
+            # Auto-save the cleared state
+            self._auto_save_mappings()
     
     def update_mapping_displays(self) -> None:
         """Update all mapping displays in the UI"""
         try:
             mappings = self.input_mapper.get_all_mappings()
+            logger.info(f"Updating UI displays with {len(mappings)} mappings: {mappings}")
             
             # Update each function's display
             for function_name, _ in FunctionMapping.FUNCTIONS:
@@ -644,6 +859,7 @@ class Run8ControlConductor:
                     device_id, input_type, input_index = mappings[function_name]
                     display_text = format_input_display(device_id, input_type, input_index)
                     self.ui_manager.update_mapping_display(function_name, display_text)
+                    logger.debug(f"Updated display for {function_name}: {display_text}")
                     
                     # Update reverse axis setting
                     reverse_setting = self.input_mapper.get_axis_reverse(function_name)
@@ -678,6 +894,9 @@ class Run8ControlConductor:
         # Stop application if running
         if self.running:
             self.stop_application()
+        
+        # Auto-save current mappings before closing
+        self._auto_save_mappings()
         
         # Cleanup resources
         try:
